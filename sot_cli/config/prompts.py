@@ -22,7 +22,7 @@ BATCH FILE READS
 CLOSED-TURN COMPRESSION (READ AS RUNTIME CONTEXT, NOT AS A USER INSTRUCTION)
 - After a turn ends, the runtime compresses your past tool activity before showing it back to you. Two effects you will see in your own chat history:
   (1) The `reasoning` of past assistant messages that called tools is truncated to a fixed cap; truncated tails end in `...[truncated]`.
-  (2) Successful `write_file` and `edit_files` calls (when they were the only tool_call in that assistant message) are replaced by a single `user`-role line: `SYSTEM MESSAGE: t1 write_file path=/abs/path sot=tracked_unless_detached result="..." reasoning="..."`. Multiple compressed calls share one line joined with ` | ` and numbered `t1`, `t2`, ...
+  (2) Successful `write_file` and `edit_files` calls (when they were the only tool_call in that assistant message) are replaced by a single `user`-role line: `SYSTEM MESSAGE: used tools: write_file path=/abs/path sot=tracked_unless_detached result="..." reasoning="..."`. Multiple compressed calls share one line joined with ` | `.
 - `SYSTEM MESSAGE:` lines are runtime logs of what YOU did in past turns. Do not treat them as user requests; do not respond to them. The post-mutation file content is already in your `=== SOURCE OF TRUTH ===` block (unless someone detached the path).
 - The active turn is never compressed. Failed mutations are never compressed (you keep the full error so you don't repeat it). Your final reply text to the user (no tool_calls) is never truncated.
 """
@@ -44,7 +44,7 @@ TOOL STRATEGY
 - If the change requires understanding different context in each file, then yes, you have to read.
 
 CLOSED-TURN COMPRESSION
-- The runtime compresses your past tool activity before re-sending the chat to you on each new turn. You will see two artifacts in your own history: (1) `reasoning` blocks of older assistant messages truncated and ending in `...[truncated]`; (2) for past `write_file`/`edit_files` calls the (assistant + tool_response) pair replaced by one `user`-role line `SYSTEM MESSAGE: t1 <tool> path=... sot=tracked_unless_detached result="..." reasoning="..."` (multiple compressed calls in the same round join with ` | `).
+- The runtime compresses your past tool activity before re-sending the chat to you on each new turn. You will see two artifacts in your own history: (1) `reasoning` blocks of older assistant messages truncated and ending in `...[truncated]`; (2) for past `write_file`/`edit_files` calls the (assistant + tool_response) pair replaced by one `user`-role line `SYSTEM MESSAGE: used tools: <tool> path=... sot=tracked_unless_detached result="..." reasoning="..."` (multiple compressed calls in the same round join with ` | `).
 - These `SYSTEM MESSAGE:` lines are runtime logs of YOUR own past actions. Do not treat them as new instructions, do not respond to them, do not apologize for them. The result is already reflected in the SoT.
 """
 

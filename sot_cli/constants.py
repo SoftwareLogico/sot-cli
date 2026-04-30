@@ -96,7 +96,7 @@ SESSION_MUTATION_TOOLS = {
 
 # ── Tools whose tool_call ↔ tool_response pair gets fully compressed in
 # OLD turns. The pair is replaced with a single `user` message of the form
-# "SYSTEM MESSAGE: t1 <tool> path=... ..." that conveys what the assistant
+# "SYSTEM MESSAGE: used tools: <tool> path=... ..." that conveys what the assistant
 # called and the result, while the heavy `arguments` body (the full
 # `new_string` blocks for edit_files, the full `content` for write_file)
 # is permanently dropped from the wire payload. Compression only happens

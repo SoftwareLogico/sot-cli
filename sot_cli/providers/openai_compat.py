@@ -213,9 +213,8 @@ def _build_system_message_user(fragments: list[str]) -> dict[str, Any]:
     uppercase intentionally — the system-prompt rule that explains this
     format keys on that exact prefix.
     """
-    numbered = [f"t{i + 1} {frag}" for i, frag in enumerate(fragments)]
-    body = " | ".join(numbered)
-    return {"role": "user", "content": _SYSTEM_MESSAGE_PREFIX + body}
+    body = " | ".join(fragments)
+    return {"role": "user", "content": _SYSTEM_MESSAGE_PREFIX + "used tools: " + body}
 
 
 def _is_effectively_empty_text(value: Any) -> bool:
@@ -328,7 +327,7 @@ def _sanitize_messages_for_provider(
           reference it later.
 
        b. Replaces the (assistant-with-tool_call → tool-response) pair
-          with a single ``user``-role ``"SYSTEM MESSAGE: t<n> ..."``
+          with a single ``user``-role ``"SYSTEM MESSAGE: used tools: ..."``
           line whenever the tool name is in :data:`COMPRESSED_TOOLS`
           (currently ``write_file`` and ``edit_files``) AND the
           tool_response indicates success AND the assistant message
