@@ -523,11 +523,6 @@ async def run_tool_loop(
 
                 console.print(f"[dim]tool {tool_result.name} -> {'error' if tool_result.is_error else 'ok'}[/dim]")
 
-                # Hyper-compress: after compression, reload chat_history from disk
-                # so the in-memory state reflects the compressed request.json.
-                if tool_name == "hyper_compress" and not tool_result.is_error:
-                    _reload_chat_history_after_hyper_compress(conversation_state, request.session_id, runtime.paths.sessions_dir)
-
                 tool_summary = _build_tool_result_summary(tool_result)
                 same_round_cache[tool_signature] = (
                     tool_call_id,
@@ -571,25 +566,7 @@ async def run_tool_loop(
                 if not is_task:
                     merge_session_into_tracked(runtime, request, conversation_state.sot)
                     _refresh_request_from_session(runtime, request)
-                    if tool_name == "hyper_compress":
-                        import json as _json
-                        from pathlib import Path as _Path
-                        _req_path = _Path(runtime.paths.sessions_dir) / request.session_id / "request.json"
-                        if _req_path.exists():
-                            with open(_req_path, "r", encoding="utf-8") as _f:
-                                _data = _json.load(_f)
-                            _msgs = _data.get("payload", {}).get("messages", [])
-                            _chat: list[dict] = []
-                            for _m in _msgs:
-                                if _m.get("role") == "system":
-                                    continue
-                                if _m.get("role") == "user":
-                                    _ct = str(_m.get("content", ""))
-                                    if _ct.startswith("=== SOURCE OF TRUTH") or _ct.startswith("=== CURRENT METADATA"):
-                                        continue
-                                _chat.append(_m)
-                            if _chat:
-                                conversation_state.chat_history = _chat
+
 
             # Update tracked files/media from tool effects
             update_tracked_from_tool_result(conversation_state.sot, tool_name, tool_result)
@@ -1199,22 +1176,6 @@ def _build_tool_result_summary(tool_result: Any) -> str:
     return f"ok {json.dumps({k: v for k, v in payload.items() if k not in ('content', 'ok', 'base64')})}"[:200]
 
 
-def _reload_chat_history_after_hyper_compress(
-    conversation_state: ConversationState,
-    session_id: str,
-    sessions_dir: Path,
-) -> None:
-    """Reload chat_history from the compressed request.json on disk.
-
-    Called after a successful hyper_compress tool execution to sync
-    the in-memory conversation state with the compressed file.
-    """
-    from sot_cli.hyper_compress import reload_chat_history_from_request
-
-    session_dir = sessions_dir / session_id
-    compressed_history = reload_chat_history_from_request(session_dir)
-    if compressed_history:
-        conversation_state.chat_history = compressed_history
 
 
 # ── Streaming ─────────────────────────────────────────────────────────────

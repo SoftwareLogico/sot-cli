@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from sot_cli.hyper_compress import hyper_compress_session
 import asyncio
 import json
 from typing import Any
@@ -104,7 +103,6 @@ class ToolRegistry:
             "detach_path_from_source": self._detach_path_from_source,
             "attach_path_to_source": self._attach_path_to_source,
             "list_tasks": self._list_tasks,
-            "hyper_compress": self._hyper_compress,
         }
         # Only expose delegate_task when delegation is allowed for this registry/session.
         if not self.disable_delegation:
@@ -264,24 +262,6 @@ class ToolRegistry:
 
     def _attach_path_to_source(self, arguments: dict[str, Any]) -> dict[str, Any]:
         return execute_attach_path(arguments, self.runtime, self.session_id, self.runtime.paths.root_dir)
-
-    def _hyper_compress(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        dry_run = arguments.get("dry_run", False)
-        session_dir = self.runtime.paths.sessions_dir / self.session_id
-        result = hyper_compress_session(session_dir, dry_run=dry_run)
-        if "error" in result:
-            return {"error": result["error"]}
-        saved = result.get("chars_saved", 0)
-        before = result.get("messages_before", 0)
-        after = result.get("messages_after", 0)
-        backup = result.get("backup_path")
-        parts = [
-            f"compressed {before} -> {after} messages",
-            f"saved ~{saved:,} chars",
-        ]
-        if backup:
-            parts.append(f"backup at {backup}")
-        return {"result": ". ".join(parts)}
 
 
     def _delegate_task(self, arguments: dict[str, Any]) -> dict[str, Any]:

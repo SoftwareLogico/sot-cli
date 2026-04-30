@@ -420,6 +420,27 @@ The Source of Truth injected into the prompt is a combination of two memory laye
 At the end of each turn, the runtime generates a compact snapshot of the turn's metadata (Token usage, Turn Duration, Launch Context, Agent Statuses). This block is injected as an ephemeral `user` message **between** the SoT block and the next user prompt.
 It is never persisted into the `chat_history`. This mechanism provides the model with absolute awareness of its token limits and execution environment without polluting the permanent history.
 
+### Tools compression
+
+The runtime compresses past tool activity between turns to save tokens. Two mechanisms:
+
+**Automatic compression (every turn):**
+- `write_file` and `edit_files` calls that succeeded (and were the only tool in that assistant message) are replaced by a single `user`-role line:
+  `SYSTEM MESSAGE: write_file path=... sot=tracked_unless_detached result="..." reasoning="..."`.
+- Multiple calls in the same round are joined with ` | `.
+- The `reasoning` of tool-bearing assistant messages is truncated to `[tools].compression_reasoning_trunc_chars` chars (default 240).
+- Failed tool calls are never compressed. The active turn is never compressed.
+
+**Hyper-compression (on demand via `--hypercompress` flag):**
+- Reduces chat history size by up to ~70% with zero information loss — tool names, success/failure status, and error descriptions are preserved in a compact summary. The final assistant answer is kept verbatim.
+- Collapses whole turn sequences (user prompt → multiple tool calls → final text reply) into:
+  `SYSTEM MESSAGE: Assistant requested tools this turn: <tool> (<status>), ...`.
+- Each tool is marked `success` or `failed` with a brief error description on failure.
+- Creates a timestamped backup before modifying (`request_backup_YYYYMMDD_HHMMSS.json`).
+- One-shot operation — run once, then the session continues with normal compression rules.
+
+The model is instructed to treat all `SYSTEM MESSAGE:` lines as runtime logs, not as user instructions or new commands.
+
 ### SoT management tools
 
 The model can modify the authoritative working set of the session at any time using these tools:

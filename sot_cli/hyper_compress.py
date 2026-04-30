@@ -94,6 +94,44 @@ def hyper_compress_session(session_dir: Path, dry_run: bool = False) -> dict[str
     return stats
 
 
+def _parse_tool_status(response: str) -> tuple[str, str]:
+    """Determine tool success/failure from response content.
+
+    Returns (status, error_message) where:
+    - status is "success" or "failed"
+    - error_message is empty on success, or brief description on failure
+    """
+    if not response:
+        return "success", ""
+    lower = response.lower()
+    # Known failure patterns
+    if "error:" in lower and "ok" not in lower[:20]:
+        idx = lower.find("error:")
+        err = response[idx:idx+80].strip()
+        return "failed", err
+    if "failed" in lower and "ok" not in lower[:20]:
+        idx = lower.find("failed")
+        snippet = response[max(0,idx-20):idx+80].strip()
+        return "failed", snippet
+    if "exit=1" in response.split("'")[-1] if "'" in response else False:
+        return "failed", "command returned exit code 1"
+    return "success", ""
+
+
+def _format_tool_summary(pairs: list[tuple[str, str, str]]) -> str:
+    """Build a SYSTEM MESSAGE summarizing what tools were used."""
+    parts: list[str] = []
+    seen_names: set[str] = set()
+    for name, status, err in pairs:
+        if name not in seen_names:
+            seen_names.add(name)
+            if status == "failed":
+                parts.append(f"{name} ({status}: {err})")
+            else:
+                parts.append(f"{name} ({status})")
+    return f"SYSTEM MESSAGE: Assistant requested tools this turn: {', '.join(parts)}. As stated in system instructions this is a summary of tool usage."
+
+
 def _compress(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collapse tool blocks in a message list.
 
@@ -130,6 +168,7 @@ def _compress(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Peek ahead to see if this is a tool block
         j = i + 1
         tool_names: list[str] = []
+        tool_pairs: list[tuple[str, str, str]] = []
 
         while j < n:
             m = messages[j]
@@ -146,6 +185,12 @@ def _compress(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
                 # Next message must be a tool response
                 if j < n and messages[j].get("role") == "tool":
+                    resp_content = str(messages[j].get("content", ""))
+                    status, err = _parse_tool_status(resp_content)
+                    for tc in m["tool_calls"]:
+                        func = tc.get("function", {})
+                        name = str(func.get("name", "?"))
+                        tool_pairs.append((name, status, err))
                     j += 1
                     continue
                 # No matching tool response → not a valid block
@@ -153,13 +198,11 @@ def _compress(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
             elif role == "assistant" and not m.get("tool_calls") and m.get("content") and str(m.get("content", "")).strip() not in ("", "None"):
                 # Final assistant text response — this ends the block
-                if tool_names:
+                if tool_pairs:
                     # Collapse: keep user, insert SYSTEM MESSAGE, keep final text
                     result.append(msg)  # original user prompt
-                    result.append({
-                        "role": "user",
-                        "content": f"SYSTEM MESSAGE: used tools: {', '.join(tool_names)}",
-                    })
+                    sys_msg = _format_tool_summary(tool_pairs)
+                    result.append({"role": "user", "content": sys_msg})
                     result.append(m)  # final assistant text response
                     i = j + 1
                     break
@@ -177,12 +220,10 @@ def _compress(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     j += 1
                     continue
                 # Nested real user message — block was interrupted.
-                if tool_names:
+                if tool_pairs:
                     result.append(msg)
-                    result.append({
-                        "role": "user",
-                        "content": f"SYSTEM MESSAGE: used tools: {', '.join(tool_names)}",
-                    })
+                    sys_msg = _format_tool_summary(tool_pairs)
+                    result.append({"role": "user", "content": sys_msg})
                     i = j  # Continue from the interrupting user
                 else:
                     result.append(msg)
@@ -196,12 +237,10 @@ def _compress(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 break
         else:
             # j reached end of messages without finding a final assistant
-            if tool_names:
+            if tool_pairs:
                 result.append(msg)  # original user
-                result.append({
-                    "role": "user",
-                    "content": f"SYSTEM MESSAGE: used tools: {', '.join(tool_names)}",
-                })
+                sys_msg = _format_tool_summary(tool_pairs)
+                result.append({"role": "user", "content": sys_msg})
                 i = j
             else:
                 result.append(msg)

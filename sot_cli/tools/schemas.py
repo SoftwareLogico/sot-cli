@@ -23,7 +23,6 @@ from sot_cli.config.prompts import (
     WAIT_COMMAND_PROMPT,
     WAIT_TASK_PROMPT,
     WRITE_FILE_PROMPT,
-    HYPER_COMPRESS_PROMPT,
 )
 
 
@@ -377,23 +376,7 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                 },
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "hyper_compress",
-                "description": HYPER_COMPRESS_PROMPT,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "dry_run": {
-                            "type": "boolean",
-                            "description": "If true, only report what would be saved without modifying anything.",
-                        },
-                    },
-                    "additionalProperties": False,
-                },
-            },
-        },
+
     ]
 
 
