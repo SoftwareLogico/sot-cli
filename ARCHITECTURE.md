@@ -46,6 +46,7 @@ These flags work with any command or on their own:
 | `--config <path>` | Path to `sot.toml` config file. |
 | `--list_sessions` | Dump all sessions as JSON to stdout. Does not require a subcommand. No AI round-trip — read directly from disk. |
 | `--clean_sot <session_id>` | Remove ALL tracked SoT files from a session. Both permanently-attached and ephemerally-read files are cleared. No AI round-trip. |
+| `--subagent_model <model>` | Override the sub-agent model. Applies to `prompt`, `chat`, and `command`. Takes precedence over `subagent_model` in `[providers.X]`. |
 
 Example output:
 
@@ -79,6 +80,9 @@ Examples:
 
 - `sot-cli prompt`
 - `sot-cli prompt <session_id> --provider openrouter --model x-ai/grok-4.1-fast`
+- `sot-cli --list_sessions`
+- `sot-cli --clean_sot <session_id>`
+- `sot-cli prompt --subagent_model anthropic/claude-sonnet-4`
 
 #### `sot-cli chat [session_id]`
 
@@ -165,9 +169,15 @@ Every provider section accepts the same five base fields:
 | ------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `base_url`          | string          | Full URL of the OpenAI-compatible endpoint, including the `/v1` suffix.                                                                                                                                                                                  |
 | `model`             | string          | Model name. Required for cloud providers. For `lmstudio` and `ollama` it can be left empty (`""`) so the adapter auto-resolves the currently loaded model.                                                                                               |
+| `subagent_model`    | string          | Model used for delegated sub-agents. Empty = use the main `model`. Optional.                                                                                                                                                                             |
 | `temperature`       | float           | Sent on every request (subject to per-provider quirks — see below).                                                                                                                                                                                      |
 | `max_output_tokens` | int             | Token cap on the completion. Wire-level field name diverges per provider; the adapter handles the rename.                                                                                                                                                |
 | `configured`        | bool (optional) | Marker written by the wizard. When `true`, the selector skips the per-provider mini-wizard and enters the session directly. Manual edits to provider settings do **not** require flipping this back to `false` — the runtime trusts whatever is on disk. |
+
+### Structure auto-update
+
+Every time `bootstrap_runtime()` runs (i.e., every `sot-cli` invocation), the module silently compares the user's `sot.toml` against `sot.example.toml`. New keys from the example are added with their default values; keys removed from the example are dropped. User values are **never** overwritten. A timestamped backup (`sot.toml.bak.*`) is created before any write. This is fully automatic — no CLI flags, no noise.
+
 
 ### Optional fields per provider
 
@@ -482,6 +492,18 @@ Either `path` or `paths` is required.
 Remove ALL tracked files from the session Source of Truth in a single call. Both permanently-attached (session-backed) and ephemerally-read (tool-backed) files are cleared. The files remain on disk — only the tracking is removed. No parameters.
 
 Use this when you need a full context reset instead of detaching files one by one.
+
+#### `delegate_task`
+
+Spawn a temporary sub-agent with a clean context. Parameters:
+
+- `task_prompt` (required): detailed instructions
+- `provider` (optional): override provider
+- `model` (optional): override model. Resolution chain: tool arg → session `subagent_model` → provider config `subagent_model` → main model.
+- `attempts` (optional, default 2): max retries before abort
+- `background` (optional, default false): run async
+
+Used from the agent to parallelize work or offload from a heavy context. Sub-agents cannot delegate further.
 
 #### `detach_path_from_source`
 

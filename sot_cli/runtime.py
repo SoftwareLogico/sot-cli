@@ -42,6 +42,10 @@ class AppRuntime:
 
 def bootstrap_runtime(config_path: str | None = None) -> AppRuntime:
     config = load_config(config_path)
+
+    # ── Auto-update sot.toml structure from example ──
+    _auto_update_config(config_path)
+
     paths = build_paths(config, config_path)
     ensure_runtime_directories(paths)
 
@@ -57,3 +61,22 @@ def bootstrap_runtime(config_path: str | None = None) -> AppRuntime:
         paths=paths,
         sessions=SessionStore(sessions_dir),
     )
+
+
+def _auto_update_config(config_path: str | None = None) -> None:
+    """Silently update sot.toml structure from sot.example.toml.
+
+    Adds new keys, but never overwrites user values. Runs on every
+    bootstrap — fast no-op when already up to date.
+    """
+    try:
+        from sot_cli.config.app import resolve_config_path
+        from sot_cli.sot_updater import update_sot_structure
+        from pathlib import Path
+
+        resolved = resolve_config_path(config_path)
+        example = resolved.parent / "sot.example.toml"
+        if example.is_file():
+            update_sot_structure(resolved, example, dry_run=False, quiet=True)
+    except Exception:
+        pass  # Never crash on config update failures

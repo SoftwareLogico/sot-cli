@@ -30,10 +30,11 @@ class SessionRecord:
     title: str
     provider: str
     model: str
-    temperature: float | None
-    max_output_tokens: int | None
     created_at: str
     updated_at: str
+    subagent_model: str = ""
+    temperature: float | None = None
+    max_output_tokens: int | None = None
     source_entries: list[SourceEntry] = field(default_factory=list)
 
 
@@ -49,6 +50,7 @@ class SessionStore:
         model: str,
         temperature: float | None = None,
         max_output_tokens: int | None = None,
+        subagent_model: str = "",
     ) -> SessionRecord:
         session_id = self._reserve_session_id()
         timestamp = _utc_now().isoformat()
@@ -57,6 +59,7 @@ class SessionStore:
             title=title,
             provider=provider,
             model=model,
+            subagent_model=subagent_model,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             created_at=timestamp,
@@ -142,6 +145,7 @@ class SessionStore:
         title: str | object = _UNSET,
         provider: str | object = _UNSET,
         model: str | object = _UNSET,
+        subagent_model: str | object = _UNSET,
         temperature: float | None | object = _UNSET,
         max_output_tokens: int | None | object = _UNSET,
     ) -> SessionRecord:
@@ -156,6 +160,9 @@ class SessionStore:
             changed = True
         if model is not _UNSET and isinstance(model, str) and model != record.model:
             record.model = model
+            changed = True
+        if subagent_model is not _UNSET and isinstance(subagent_model, str) and subagent_model != record.subagent_model:
+            record.subagent_model = subagent_model
             changed = True
         if temperature is not _UNSET and temperature != record.temperature:
             record.temperature = temperature if isinstance(temperature, float) or temperature is None else float(temperature)
@@ -239,6 +246,7 @@ class SessionStore:
             title=payload["title"],
             provider=payload["provider"],
             model=payload["model"],
+            subagent_model=payload.get("subagent_model", ""),
             temperature=payload.get("temperature"),
             max_output_tokens=payload.get("max_output_tokens"),
             created_at=payload["created_at"],

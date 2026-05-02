@@ -194,6 +194,7 @@ The sub-agent has ZERO memory of your conversation and ZERO access to your SoT. 
 PARAMETERS:
 - `task_prompt` (required): the detailed instructions above.
 - `provider` (optional): override the sub-agent's provider. Defaults to the current session provider. Useful when a different model suits the task better (e.g., a coding-heavy task against a code-tuned model, or a cheap model for trivial chunk work).
+- `model` (optional): override the sub-agent's model. Defaults to the session's subagent_model, then the provider's subagent_model config, then the main model.
 - `attempts` (optional, integer, min 1, default 2): how many failed attempts the sub-agent may make before aborting. Keep it tight — a sub-agent looping on the same wrong approach is wasted tokens. If 2 is genuinely not enough, raise it with intent.
 - `background` (optional, boolean, default false):
  - `false` (use this for ANY single delegation) — the call blocks until the sub-agent finishes. Then call `wait_task(agent_id)` once to retrieve the report content. Single delegation = one `delegate_task(background=false)` + one `wait_task`. End of story.

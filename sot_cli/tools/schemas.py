@@ -294,6 +294,10 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                             "type": "string",
                             "description": "Optional provider override for the sub-agent. Defaults to the current session provider.",
                         },
+                        "model": {
+                            "type": "string",
+                            "description": "Optional model override for the sub-agent. Defaults to the session's subagent_model, then provider config subagent_model, then the main model.",
+                        },
                         "attempts": {
                             "type": "integer",
                             "minimum": 1,

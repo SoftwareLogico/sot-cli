@@ -81,6 +81,7 @@ class ProviderConfig:
     base_url: str = ""
     api_key: str = ""
     model: str = ""
+    subagent_model: str = ""
     temperature: float = 0.2
     max_output_tokens: int = 4096
     extra: dict[str, Any] = field(default_factory=dict)
@@ -173,6 +174,7 @@ def _parse_app_config(raw: dict[str, Any], keys_raw: dict[str, Any] | None = Non
             base_url=str(section.get("base_url", "")),
             api_key=api_key,
             model=str(section.get("model", "")),
+            subagent_model=str(section.get("subagent_model", "")),
             temperature=float(section.get("temperature", 0.2)),
             max_output_tokens=int(section.get("max_output_tokens", 4096)),
             extra={

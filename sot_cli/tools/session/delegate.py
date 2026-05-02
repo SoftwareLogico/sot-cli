@@ -114,14 +114,26 @@ def execute_delegate_task(arguments: dict[str, Any], runtime: AppRuntime, parent
 
     parent_session = runtime.sessions.load(parent_session_id)
 
+    # ── Resolve sub-agent model ──
+    # Priority: tool argument > session subagent_model > provider config subagent_model > main model
+    resolved_model = arguments.get("model")
+    if not resolved_model:
+        resolved_model = parent_session.subagent_model
+    if not resolved_model:
+        provider_config = runtime.config.provider(parent_session.provider)
+        resolved_model = provider_config.subagent_model
+    if not resolved_model:
+        resolved_model = parent_session.model
+
+    resolved_provider = arguments.get("provider") or parent_session.provider
 
     original_sessions_dir = runtime.sessions.sessions_dir
     runtime.sessions.sessions_dir = agents_dir
     try:
         temp_session = runtime.sessions.create_session(
             title=f"delegate {parent_session_id}",
-            provider=arguments.get("provider") or parent_session.provider,
-            model=parent_session.model,
+            provider=resolved_provider,
+            model=resolved_model,
         )
         old_dir = agents_dir / temp_session.id
         temp_session.id = agent_id

@@ -1547,12 +1547,15 @@ async def _run_prompt(
         if not model and provider not in {"lmstudio", "ollama"}:
             raise ValueError(f"Provider {provider} has no default model configured. Pass --model explicitly.")
         session_title = title or f"prompt {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        # Resolve subagent_model: CLI override > provider config default
+        resolved_subagent = subagent_model_override or provider_config.subagent_model or ""
         record = runtime.sessions.create_session(
             session_title,
             provider=provider,
             model=model,
             temperature=None,
             max_output_tokens=None,
+            subagent_model=resolved_subagent,
         )
 
     active_provider = record.provider

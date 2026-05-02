@@ -189,6 +189,9 @@ sot-cli --list_sessions
 # Remove all SoT tracked files from a session
 sot-cli --clean_sot <session_id>
 
+# Use a different model for delegated sub-agents
+sot-cli prompt --subagent_model gemma4
+
 # Resume a previous session
 sot-cli <session_id>
 ```
