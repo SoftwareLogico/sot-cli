@@ -24,6 +24,8 @@ def prepare_turn_request(
 
     if model_override and model_override.strip():
         model = model_override.strip()
+    elif session.model:
+        model = session.model
     else:
         model = provider.model
 
