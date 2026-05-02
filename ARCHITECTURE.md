@@ -37,6 +37,31 @@ Executes a headless agent session. Used internally by the `delegate_task` tool t
 
 This section centralizes the parameters that are commonly omitted in high-level docs.
 
+### Global CLI flags
+
+These flags work with any command or on their own:
+
+| Flag | Description |
+|------|-------------|
+| `--config <path>` | Path to `sot.toml` config file. |
+| `--list_sessions` | Dump all sessions as JSON to stdout. Does not require a subcommand. No AI round-trip — read directly from disk. |
+| `--clean_sot <session_id>` | Remove ALL tracked SoT files from a session. Both permanently-attached and ephemerally-read files are cleared. No AI round-trip. |
+
+Example output:
+
+```
+SESSIONS:
+[
+  {
+    "id": "20260430-112040",
+    "title": "prompt 2026-04-30 11:20:40",
+    "provider": "openrouter",
+    "model": "openrouter/owl-alpha",
+    ...
+  }
+]
+```
+
 ### CLI commands used to run agents
 
 #### `sot-cli prompt [session_id]`
@@ -451,6 +476,12 @@ Parameters:
 - `label` (string, optional): human label; only supported with a single path.
 
 Either `path` or `paths` is required.
+
+#### `clean_sot`
+
+Remove ALL tracked files from the session Source of Truth in a single call. Both permanently-attached (session-backed) and ephemerally-read (tool-backed) files are cleared. The files remain on disk — only the tracking is removed. No parameters.
+
+Use this when you need a full context reset instead of detaching files one by one.
 
 #### `detach_path_from_source`
 

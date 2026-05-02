@@ -19,6 +19,7 @@ from sot_cli.tools.reader.main import execute_read_many_files
 from sot_cli.tools.search.search_code import execute_search_code
 from sot_cli.tools.session.control import (
     execute_attach_path,
+    execute_clean_sot,
     execute_detach_path,
     execute_get_session_state,
     execute_update_session,
@@ -93,6 +94,7 @@ class ToolRegistry:
             "detach_path_from_source": self._detach_path_from_source,
             "attach_path_to_source": self._attach_path_to_source,
             "list_tasks": self._list_tasks,
+            "clean_sot": self._clean_sot,
         }
         # Only expose delegate_task when delegation is allowed for this registry/session.
         if not self.disable_delegation:
@@ -216,6 +218,9 @@ class ToolRegistry:
 
     def _update_session(self, arguments: dict[str, Any]) -> dict[str, Any]:
         return execute_update_session(arguments, self.runtime, self.session_id)
+
+    def _clean_sot(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_clean_sot(arguments, self.runtime, self.session_id)
 
     def _detach_path_from_source(self, arguments: dict[str, Any]) -> dict[str, Any]:
         return execute_detach_path(arguments, self.runtime, self.session_id, self.runtime.paths.root_dir)

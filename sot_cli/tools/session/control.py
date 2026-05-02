@@ -54,6 +54,38 @@ def _resolve_source_argument_paths(
     return _dedupe_paths(normalized_paths)
 
 
+def execute_clean_sot(
+    arguments: dict[str, Any],
+    runtime: Any,
+    session_id: str,
+) -> dict[str, Any]:
+    _ensure_no_arguments(arguments)
+    record = runtime.sessions.load(session_id)
+
+    # Collect all session-backed (permanent) paths
+    session_paths: list[str] = []
+    for entry in record.source_entries:
+        session_paths.append(entry.value)
+
+    # Remove all session-backed entries
+    for entry in list(record.source_entries):
+        try:
+            record, _removed = runtime.sessions.remove_source_entry(session_id, entry_id=entry.id)
+        except FileNotFoundError:
+            pass
+
+    # Reload to get final count
+    record = runtime.sessions.load(session_id)
+
+    return {
+        "session_id": record.id,
+        "cleaned_session_paths": session_paths,
+        "cleaned_count": len(session_paths),
+        "source_entries": len(record.source_entries),
+        "note": "Session-backed entries removed. Tool-backed (ephemeral) entries will be cleared from memory on the next turn.",
+    }
+
+
 def execute_get_session_state(
     arguments: dict[str, Any],
     runtime: Any,

@@ -329,6 +329,11 @@ Attach one or more files or directories to the session Source of Truth (SoT) so 
 Use path for a single target or paths for batch attach. Prefer a single batch call when attaching multiple paths. \
 Text files are included in future requests automatically; binary or non-decodable files remain as tracked references."""
 
+CLEAN_SOT_PROMPT = """\
+Remove ALL tracked files from the session Source of Truth (SoT) in a single call. Both permanently-attached and ephemerally-read files are cleared. The files remain on disk — this only frees your context tokens.
+
+Use this when you need a full context reset instead of detaching files one by one. No parameters."""
+
 LIST_TASKS_PROMPT = (
  "List all delegated sub-agent tasks and their status (RUNNING/COMPLETED). "
  "DO NOT poll this tool repeatedly in a loop. Use wait_task to block until completion."

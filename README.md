@@ -183,6 +183,12 @@ sot-cli --provider [openrouter/lmstudio/openai/ollama/nvidia]
 sot-cli --provider [openrouter/lmstudio/openai/ollama/nvidia] --model modelName
 # e.g. sot-cli --provider openai --model gpt-5.4-mini-2026-03-17
 
+# List all sessions as JSON (no AI round-trip, reads straight from disk)
+sot-cli --list_sessions
+
+# Remove all SoT tracked files from a session
+sot-cli --clean_sot <session_id>
+
 # Resume a previous session
 sot-cli <session_id>
 ```

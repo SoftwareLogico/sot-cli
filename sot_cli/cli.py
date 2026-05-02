@@ -91,7 +91,7 @@ def _normalize_argv_for_default_prompt(argv: list[str] | None) -> list[str] | No
     while insert_at < len(raw_args):
         token = raw_args[insert_at]
 
-        if token in {"-h", "--help"}:
+        if token in {"-h", "--help", "--list_sessions", "--clean_sot"}:
             return None if should_return_none else raw_args
 
         if token == "--config":
@@ -968,6 +968,14 @@ def _configure_provider_credentials(
 
 
 def _dispatch(args: Namespace) -> int:
+    if args.list_sessions:
+        _list_sessions(getattr(args, 'sessions_dir', None))
+        return 0
+
+    if args.clean_sot:
+        _clean_sot_session(args.clean_sot, getattr(args, 'sessions_dir', None), args.config)
+        return 0
+
     if not args.config:
         first_run_root = _detect_first_run_root()
         if first_run_root is not None:
@@ -1031,6 +1039,7 @@ def _dispatch(args: Namespace) -> int:
         _print_status(runtime)
         return 0
 
+
     if args.command == "sot_attach":
         record = runtime.sessions.attach_path(
             session_id=args.session_id, target_path=args.target,
@@ -1066,6 +1075,8 @@ def _dispatch(args: Namespace) -> int:
 def _build_parser() -> ArgumentParser:
     parser = ArgumentParser(prog="sot-cli")
     parser.add_argument("--config", default=None, help="Path to sot.toml")
+    parser.add_argument("--list_sessions", action="store_true", help="List all sessions as JSON")
+    parser.add_argument("--clean_sot", default=None, metavar="SESSION_ID", help="Remove all SoT tracked files from a session")
     subparsers = parser.add_subparsers(dest="command")
 
     _PROVIDER_CHOICES = ["lmstudio", "openrouter", "openai", "xai", "ollama", "nvidia"]
@@ -1149,6 +1160,81 @@ def _print_status(runtime: AppRuntime) -> None:
 
     console.print(table)
     console.print("[dim]Resume a session: sot-cli <session_id>[/dim]")
+
+
+def _clean_sot_session(session_id: str, sessions_dir=None, config=None):
+    from pathlib import Path
+    import json
+
+    if sessions_dir is None:
+        sessions_dir = Path.cwd() / ".sot-cli"
+    sessions_path = Path(sessions_dir) / "sessions"
+    session_path = sessions_path / session_id
+
+    if not session_path.is_dir():
+        error_console.print(f"[red]Session not found: {escape(session_id)}[/red]")
+        return
+
+    session_file = session_path / "session.json"
+    if not session_file.is_file():
+        error_console.print(f"[red]No session.json in {escape(str(session_path))}[/red]")
+        return
+
+    try:
+        data = json.loads(session_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        error_console.print(f"[red]Could not read session.json for {escape(session_id)}[/red]")
+        return
+
+    entries = data.get("source_entries", [])
+    if not entries:
+        console.print(f"[dim]Session {escape(session_id)} has no tracked SoT files.[/dim]")
+        return
+
+    # Boot runtime to use session store
+    runtime = bootstrap_runtime(config)
+    record = runtime.sessions.load(session_id)
+
+    cleaned_paths: list[str] = []
+    for entry in list(record.source_entries):
+        cleaned_paths.append(entry.value)
+        try:
+            runtime.sessions.remove_source_entry(session_id, entry_id=entry.id)
+        except FileNotFoundError:
+            pass
+
+    console.print(f"[green]Cleaned {len(cleaned_paths)} SoT entries from session {escape(session_id)}:[/green]")
+    for p in cleaned_paths:
+        console.print(f"  [dim]- {escape(p)}[/dim]")
+
+
+def _list_sessions(sessions_dir=None):
+    import json
+    from pathlib import Path
+
+    if sessions_dir is None:
+        sessions_dir = Path.cwd() / ".sot-cli"
+    sessions_path = Path(sessions_dir) / "sessions"
+    if not sessions_path.is_dir():
+        print("SESSIONS:")
+        print("[]")
+        return
+
+    sessions = []
+    for session_dir in sorted(sessions_path.iterdir(), reverse=True):
+        if not session_dir.is_dir():
+            continue
+        session_file = session_dir / "session.json"
+        if session_file.is_file():
+            try:
+                data = json.loads(session_file.read_text(encoding="utf-8"))
+                data["id"] = session_dir.name
+                sessions.append(data)
+            except Exception:
+                pass
+
+    print("SESSIONS:")
+    print(json.dumps(sessions, indent=2, ensure_ascii=False, default=str))
 
 
 # ── SoT display ──────────────────────────────────────────────────────────

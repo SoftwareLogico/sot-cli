@@ -238,6 +238,15 @@ def update_tracked_from_tool_result(
             state.session_tracked_file_paths.discard(fpath)
             state.session_tracked_media_paths.discard(fpath)
 
+    if tool_name == "clean_sot":
+        # Remove ALL tracked paths — both session-backed and tool-backed — from in-memory SoT.
+        state.tracked_files.clear()
+        state.tracked_media.clear()
+        state.tracked_file_mtimes.clear()
+        state.session_tracked_file_paths.clear()
+        state.session_tracked_media_paths.clear()
+        return
+
     if tool_name == "detach_path_from_source":
         # Remove both session-backed and tool-backed paths from the in-memory SoT.
         # detached_paths contains ALL paths that were requested (regardless of

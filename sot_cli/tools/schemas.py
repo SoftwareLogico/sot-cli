@@ -5,6 +5,7 @@ from typing import Any
 from sot_cli.config import KNOWN_PROVIDERS
 from sot_cli.config.prompts import (
     ATTACH_PATH_PROMPT,
+    CLEAN_SOT_PROMPT,
     DELEGATE_TASK_PROMPT,
     DELETE_FILE_PROMPT,
     DETACH_PATH_PROMPT,
@@ -306,6 +307,14 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                     "required": ["task_prompt"],
                     "additionalProperties": False,
                 },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "clean_sot",
+                "description": CLEAN_SOT_PROMPT,
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
             },
         },
 
