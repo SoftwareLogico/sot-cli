@@ -188,11 +188,15 @@ def build_sot_user_message(
         for fpath, content in tracked_files.items():
             line_count = _count_lines(content)
             size_bytes = len(content.encode("utf-8"))
+            numbered_lines: list[str] = []
+            for i, line in enumerate(content.split("\n"), 1):
+                numbered_lines.append(f"{i:>6}|{line}")
+            numbered_content = "\n".join(numbered_lines)
             text_sections.append(
                 "\n".join(
                     [
                         f"--- FILE: {fpath} ({line_count} lines, {size_bytes} bytes) ---",
-                        content,
+                        numbered_content,
                         f"--- END: {fpath} ---",
                     ]
                 )

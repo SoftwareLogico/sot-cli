@@ -318,7 +318,13 @@ def _parse_tracked_files_from_text(sot_text: str) -> dict[str, str]:
         index += 1
         body: list[str] = []
         while index < len(lines) and lines[index] != end_marker:
-            body.append(lines[index])
+            raw_line = lines[index]
+            # Strip line-number prefix if present ("     1|")
+            if len(raw_line) >= 7 and raw_line[6] == "|":
+                prefix = raw_line[:6]
+                if prefix.replace(" ", "").isdigit():
+                    raw_line = raw_line[7:]
+            body.append(raw_line)
             index += 1
 
         tracked_files[path] = "\n".join(body)

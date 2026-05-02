@@ -9,6 +9,24 @@ When building AI agents for programming, a naive approach involves appending eve
 
 The **Source of Truth (SoT) Method** is an architectural pattern designed to solve these problems by fundamentally changing how the AI perceives and interacts with the state of a project.
 
+### Line numbers in the SoT block
+
+Every file in the SoT block is displayed with line numbers prefixed to each line:
+
+```
+--- FILE: /path/to/file.py (42 lines, 1234 bytes) ---
+     1|import argparse
+     2|
+     3|def main():
+     4|    parser = argparse.ArgumentParser()
+    ...
+--- END: /path/to/file.py ---
+```
+
+The format is `{i:>6}|` — 6-digit right-aligned number followed by a pipe.
+
+**Why:** The AI can use `edit_files` with `start_line`/`end_line` directly from the SoT block, eliminating the need for `search_code` to discover line numbers. This saves one tool call per edit when the file is already tracked.
+
 ## 2. What is the Source of Truth (SoT) Method?
 
 The core principle of the SoT method is:

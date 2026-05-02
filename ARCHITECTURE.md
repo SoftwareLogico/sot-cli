@@ -444,6 +444,8 @@ The Source of Truth injected into the prompt is a combination of two memory laye
 - **Session-backed (Permanent):** Comes from the persisted `session.json`. These are core files (like preprompts, schemas, or main guidelines) that are refreshed and injected at the start of _every_ turn in that session. Managed via `attach_path_to_source` or the CLI `sot_attach`.
 - **Tool-backed (Ephemeral):** Appeared because the model actively read them during the current conversation (e.g., via `read_files` to fix a specific bug). They live in memory to provide immediate context but can be easily discarded using `detach_path_from_source` once the task is done to save tokens.
 
+**Line numbers in the SoT block:** Every file in the SoT block is displayed with line numbers (`{i:>6}|` format). The model can use `edit_files` with `start_line`/`end_line` directly from the SoT without calling `search_code` first.
+
 ### Current Metadata Injection (`CURRENT METADATA`)
 
 At the end of each turn, the runtime generates a compact snapshot of the turn's metadata (Token usage, Turn Duration, Launch Context, Agent Statuses). This block is injected as an ephemeral `user` message **between** the SoT block and the next user prompt.
