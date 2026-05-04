@@ -45,7 +45,7 @@ These flags work with any command or on their own:
 |------|-------------|
 | `--config <path>` | Path to `sot.toml` config file. |
 | `--list_sessions` | Dump all sessions as JSON to stdout. Does not require a subcommand. No AI round-trip — read directly from disk. |
-| `--clean_sot <session_id>` | Remove ALL tracked SoT files from a session. Both permanently-attached and ephemerally-read files are cleared. No AI round-trip. |
+| `--clean_sot <session_id>` | Clean all SoT blocks from a session's persisted files (request.json, session.json, turn_metadata.json). No AI round-trip. The agent `clean_sot` tool handles in-memory cleanup during an active session. |
 | `--subagent_model <model>` | Override the sub-agent model. Applies to `prompt`, `chat`, and `command`. Takes precedence over `subagent_model` in `[providers.X]`. |
 
 Example output:
@@ -81,7 +81,7 @@ Examples:
 - `sot-cli prompt`
 - `sot-cli prompt <session_id> --provider openrouter --model x-ai/grok-4.1-fast`
 - `sot-cli --list_sessions`
-- `sot-cli --clean_sot <session_id>`
+- `sot-cli --clean_sot <session_id>`  (removes persisted SoT blocks; for in-memory cleanup inside an active session use the `clean_sot` tool)
 - `sot-cli prompt --subagent_model anthropic/claude-sonnet-4`
 
 #### `sot-cli chat [session_id]`

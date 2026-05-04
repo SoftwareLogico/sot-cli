@@ -973,7 +973,7 @@ def _dispatch(args: Namespace) -> int:
         return 0
 
     if args.clean_sot:
-        _clean_sot_session(args.clean_sot, getattr(args, 'sessions_dir', None), args.config)
+        _clean_sot_session(args.clean_sot, getattr(args, 'sessions_dir', None))
         return 0
 
     if not args.config:
@@ -1163,9 +1163,20 @@ def _print_status(runtime: AppRuntime) -> None:
     console.print("[dim]Resume a session: sot-cli <session_id>[/dim]")
 
 
-def _clean_sot_session(session_id: str, sessions_dir=None, config=None):
+def _clean_sot_session(session_id: str, sessions_dir=None):
+    """Remove all SoT data from a session's persisted JSON files.
+
+    Cleans three files:
+      1. request.json   — drops every ``user`` message whose content
+                          starts with ``=== SOURCE OF TRUTH ===`` or
+                          ``=== CURRENT METADATA ===``.
+      2. session.json  — empties ``source_entries``.
+      3. turn_metadata.json — sets ``SoT Tracked Files`` to 0 and
+                               ``sot_files`` to ``[]``.
+    """
     from pathlib import Path
     import json
+    import shutil
 
     if sessions_dir is None:
         sessions_dir = Path.cwd() / ".sot-cli"
@@ -1176,49 +1187,95 @@ def _clean_sot_session(session_id: str, sessions_dir=None, config=None):
         error_console.print(f"[red]Session not found: {escape(session_id)}[/red]")
         return
 
-    session_file = session_path / "session.json"
-    if not session_file.is_file():
-        error_console.print(f"[red]No session.json in {escape(str(session_path))}[/red]")
-        return
+    cleaned_request = 0
+    cleaned_metadata = 0
+    cleaned_session = 0
 
-    try:
-        data = json.loads(session_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        error_console.print(f"[red]Could not read session.json for {escape(session_id)}[/red]")
-        return
-
-    entries = data.get("source_entries", [])
-    if not entries:
-        console.print(f"[dim]Session {escape(session_id)} has no session-backed SoT entries.[/dim]")
-        console.print(
-            "[dim]Session-backed entries are files permanently attached via"
-            " `sot_attach` or `attach_path_to_source`.\n"
-            "Ephemeral files (loaded via `read_files` during an active agent"
-            " session) are in-memory only and can be cleaned with the `clean_sot`"
-            " tool inside the session, not from the CLI.[/dim]"
-        )
-        return
-
-    # Boot runtime to use session store
-    runtime = bootstrap_runtime(config)
-    record = runtime.sessions.load(session_id)
-
-    cleaned_paths: list[str] = []
-    for entry in list(record.source_entries):
-        cleaned_paths.append(entry.value)
+    # --- 1. request.json ---
+    request_file = session_path / "request.json"
+    if request_file.is_file():
         try:
-            runtime.sessions.remove_source_entry(session_id, entry_id=entry.id)
-        except FileNotFoundError:
+            request_data = json.loads(request_file.read_text(encoding="utf-8"))
+            messages = request_data.get("payload", {}).get("messages", [])
+            if isinstance(messages, list):
+                SOT_PREFIX = "=== SOURCE OF TRUTH ==="
+                META_PREFIX = "=== CURRENT METADATA ==="
+                filtered = []
+                for msg in messages:
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role == "user" and isinstance(content, str):
+                        stripped = content.lstrip()
+                        if stripped.startswith(SOT_PREFIX):
+                            cleaned_request += 1
+                            continue
+                        if stripped.startswith(META_PREFIX):
+                            cleaned_metadata += 1
+                            continue
+                    filtered.append(msg)
+                if cleaned_request or cleaned_metadata:
+                    backup = request_file.with_suffix(".json.bak")
+                    shutil.copy2(request_file, backup)
+                    request_data["payload"]["messages"] = filtered
+                    request_file.write_text(
+                        json.dumps(request_data, ensure_ascii=True, indent=2),
+                        encoding="utf-8",
+                    )
+                    console.print(f"[dim]Backup saved: {escape(str(backup))}[/dim]")
+        except (json.JSONDecodeError, OSError, KeyError):
             pass
 
-    console.print(f"[green]Cleaned {len(cleaned_paths)} session-backed entries from {escape(session_id)}:[/green]")
-    for p in cleaned_paths:
-        console.print(f"  [dim]- {escape(p)}[/dim]")
-    console.print(
-        "[dim]Note: Ephemeral files (from `read_files`) are in-memory only."
-        " Use the `clean_sot` tool inside an active agent session to clean them.[/dim]"
-    )
+    # --- 2. session.json ---
+    session_file = session_path / "session.json"
+    if session_file.is_file():
+        try:
+            session_data = json.loads(session_file.read_text(encoding="utf-8"))
+            entries = session_data.get("source_entries", [])
+            if entries:
+                cleaned_session = len(entries)
+                session_data["source_entries"] = []
+                session_file.write_text(
+                    json.dumps(session_data, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+        except (json.JSONDecodeError, OSError):
+            pass
 
+    # --- 3. turn_metadata.json ---
+    metadata_file = session_path / "turn_metadata.json"
+    if metadata_file.is_file():
+        try:
+            meta = json.loads(metadata_file.read_text(encoding="utf-8"))
+            changed = False
+            snapshot = meta.get("snapshot", {})
+            if snapshot.get("SoT Tracked Files", 0) != 0:
+                snapshot["SoT Tracked Files"] = 0
+                changed = True
+            render = meta.get("render", {})
+            if render.get("sot_files", []):
+                render["sot_files"] = []
+                changed = True
+            if changed:
+                metadata_file.write_text(
+                    json.dumps(meta, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # --- 4. Report ---
+    parts = []
+    if cleaned_request:
+        parts.append(f"{cleaned_request} SoT {'block' if cleaned_request == 1 else 'blocks'} from request.json")
+    if cleaned_metadata:
+        parts.append(f"{cleaned_metadata} metadata {'block' if cleaned_metadata == 1 else 'blocks'} from request.json")
+    if cleaned_session:
+        parts.append(f"{cleaned_session} source {'entry' if cleaned_session == 1 else 'entries'} from session.json")
+
+    if parts:
+        console.print(f"[green]Cleaned {escape(session_id)}: {', '.join(parts)}.[/green]")
+    else:
+        console.print(f"[dim]Session {escape(session_id)} has no SoT data to clean.[/dim]")
 
 def _list_sessions(sessions_dir=None):
     import json

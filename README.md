@@ -186,14 +186,18 @@ sot-cli --provider [openrouter/lmstudio/openai/ollama/nvidia] --model modelName
 # List all sessions as JSON (no AI round-trip, reads straight from disk)
 sot-cli --list_sessions
 
-# Remove all SoT tracked files from a session
-sot-cli --clean_sot <session_id>
-
 # Use a different model for delegated sub-agents
 sot-cli prompt --subagent_model gemma4
 
 # Resume a previous session
 sot-cli <session_id>
+
+# Cleaning the house removing extras manually
+# Manually remove files in SoT
+sot-cli --clean_sot <session_id>
+
+# Convert previous used tools into receipts
+sot-cli --clean_sot <session_id> --hypercompress
 ```
 
 ## 🧠 The Core Concept: The SoT Method
