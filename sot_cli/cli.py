@@ -1017,6 +1017,7 @@ def _dispatch(args: Namespace) -> int:
                 return await _run_prompt(
                     runtime, getattr(args, "session_id", None), getattr(args, "title", None),
                     getattr(args, "provider", None), getattr(args, "model", None), getattr(args, "no_tools", False),
+                    subagent_model_override=getattr(args, "subagent_model", None),
                     hypercompress=getattr(args, "hypercompress", False),
                 )
             if args.command == "command":
@@ -1188,7 +1189,14 @@ def _clean_sot_session(session_id: str, sessions_dir=None, config=None):
 
     entries = data.get("source_entries", [])
     if not entries:
-        console.print(f"[dim]Session {escape(session_id)} has no tracked SoT files.[/dim]")
+        console.print(f"[dim]Session {escape(session_id)} has no session-backed SoT entries.[/dim]")
+        console.print(
+            "[dim]Session-backed entries are files permanently attached via"
+            " `sot_attach` or `attach_path_to_source`.\n"
+            "Ephemeral files (loaded via `read_files` during an active agent"
+            " session) are in-memory only and can be cleaned with the `clean_sot`"
+            " tool inside the session, not from the CLI.[/dim]"
+        )
         return
 
     # Boot runtime to use session store
@@ -1203,9 +1211,13 @@ def _clean_sot_session(session_id: str, sessions_dir=None, config=None):
         except FileNotFoundError:
             pass
 
-    console.print(f"[green]Cleaned {len(cleaned_paths)} SoT entries from session {escape(session_id)}:[/green]")
+    console.print(f"[green]Cleaned {len(cleaned_paths)} session-backed entries from {escape(session_id)}:[/green]")
     for p in cleaned_paths:
         console.print(f"  [dim]- {escape(p)}[/dim]")
+    console.print(
+        "[dim]Note: Ephemeral files (from `read_files`) are in-memory only."
+        " Use the `clean_sot` tool inside an active agent session to clean them.[/dim]"
+    )
 
 
 def _list_sessions(sessions_dir=None):
@@ -1493,6 +1505,7 @@ async def _run_prompt(
     provider_name: str | None,
     model_override: str | None,
     no_tools: bool,
+    subagent_model_override: str | None = None,
     hypercompress: bool = False,
 ) -> int:
     if session_id:
@@ -1540,6 +1553,10 @@ async def _run_prompt(
 
         if update_kwargs:
             record = runtime.sessions.update_session(session_id, **update_kwargs)
+
+        # Update subagent_model on resume if CLI override provided
+        if subagent_model_override:
+            record = runtime.sessions.update_session(session_id, subagent_model=subagent_model_override)
     else:
         provider = provider_name or runtime.config.runtime.primary_provider
         provider_config = runtime.config.provider(provider)
@@ -1591,6 +1608,14 @@ async def _run_prompt(
     line_model = f"[bold white]model[/bold white]    {escape(active_model)}"
     if any(k in active_model.lower() for k in ["uncensored", "uncensor", "abliterated", "obliterated", "nsfw"]) and "😎" not in active_model:
         line_model += " 😎"
+    line_subagent = ""
+    if record.subagent_model:
+        subagent_display = f"[bold white]subagent[/bold white] {escape(record.subagent_model)}"
+        if any(k in record.subagent_model.lower() for k in ["uncensored", "uncensor", "abliterated", "obliterated", "nsfw"]) and "😎" not in record.subagent_model:
+            subagent_display += " 😎"
+        if record.subagent_model != active_model:
+            subagent_display += " (≠ main)"
+        line_subagent = subagent_display
     line_time = f"[bold white]started[/bold white]  {escape(start_now_str)}"
     line_stats = f"[bold white]specs[/bold white]    {escape(stats_line)}" if stats_line else ""
     line_caps = f"[bold white]caps[/bold white]     {escape(caps_line)} | tools={'off' if no_tools else 'on'}" if caps_line else f"[bold white]tools[/bold white]    {'off' if no_tools else 'on'}"
@@ -1625,7 +1650,7 @@ async def _run_prompt(
     line_cwd = f"[bold white]cwd[/bold white]      {escape(cwd)}" if cwd else ""
 
     banner_lines = [logo, ""]
-    for line in [line_provider, line_session, line_route, line_model, line_time, line_stats, line_caps, "", line_host, line_shell, line_cwd]:
+    for line in [line_provider, line_session, line_route, line_model, line_subagent, line_time, line_stats, line_caps, "", line_host, line_shell, line_cwd]:
         if line or line == "":
             banner_lines.append(line)
     banner_lines.append("")
