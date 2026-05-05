@@ -1611,9 +1611,13 @@ async def _run_prompt(
         if update_kwargs:
             record = runtime.sessions.update_session(session_id, **update_kwargs)
 
-        # Update subagent_model on resume if CLI override provided
+        # Update subagent_model on resume: CLI override > current config
         if subagent_model_override:
-            record = runtime.sessions.update_session(session_id, subagent_model=subagent_model_override)
+            resolved_subagent = subagent_model_override
+        else:
+            resolved_subagent = provider_config.subagent_model
+        if resolved_subagent != record.subagent_model:
+            record = runtime.sessions.update_session(session_id, subagent_model=resolved_subagent)
     else:
         provider = provider_name or runtime.config.runtime.primary_provider
         provider_config = runtime.config.provider(provider)
