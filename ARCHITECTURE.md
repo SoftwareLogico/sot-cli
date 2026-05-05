@@ -548,3 +548,9 @@ The fix is to collapse past tool activity before switching models:
 Hyper-compression rewrites closed-turn tool activity into compact
 `SYSTEM MESSAGE:` lines, leaving a clean `user`/`assistant` history that is
 compatible with any provider.
+
+### Terminal freeze while waiting for the model or a tool
+
+The terminal may appear frozen while the provider is thinking (stream has
+no read timeout) or while a local tool is running. Just Press Ctrl+C once: if a foreground
+process was interrupted the model continues; a second Ctrl+C aborts the turn.
