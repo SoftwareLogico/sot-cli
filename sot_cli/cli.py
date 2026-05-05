@@ -1089,6 +1089,7 @@ def _build_parser() -> ArgumentParser:
     prompt.add_argument("--model", default=None)
     prompt.add_argument("--no-tools", action="store_true", help="Plain chat without tool loop")
     prompt.add_argument("--hypercompress", action="store_true", help="Run hyper-compression on session history before starting")
+    prompt.add_argument("--subagent_model", default=None, help="Override sub-agent model")
 
     chat = subparsers.add_parser("chat", help="Alias for prompt")
     chat.add_argument("session_id", nargs="?", default=None)
@@ -1097,6 +1098,7 @@ def _build_parser() -> ArgumentParser:
     chat.add_argument("--model", default=None)
     chat.add_argument("--no-tools", action="store_true")
     chat.add_argument("--hypercompress", action="store_true")
+    chat.add_argument("--subagent_model", default=None, help="Override sub-agent model")
 
     cmd = subparsers.add_parser("command", help="Run a single turn (multi-agent / automation)")
     cmd.add_argument("session_id", help="Session ID to run against")
@@ -1104,6 +1106,7 @@ def _build_parser() -> ArgumentParser:
     cmd.add_argument("--provider", choices=_PROVIDER_CHOICES, default=None)
     cmd.add_argument("--model", default=None)
     cmd.add_argument("--no-tools", action="store_true")
+    cmd.add_argument("--subagent_model", default=None, help="Override sub-agent model")
     cmd.add_argument(
         "--disable-delegation",
         action="store_true",
