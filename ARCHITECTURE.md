@@ -41,12 +41,12 @@ This section centralizes the parameters that are commonly omitted in high-level 
 
 These flags work with any command or on their own:
 
-| Flag | Description |
-|------|-------------|
-| `--config <path>` | Path to `sot.toml` config file. |
-| `--list_sessions` | Dump all sessions as JSON to stdout. Does not require a subcommand. No AI round-trip — read directly from disk. |
+| Flag                       | Description                                                                                                                                                                                              |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--config <path>`          | Path to `sot.toml` config file.                                                                                                                                                                          |
+| `--list_sessions`          | Dump all sessions as JSON to stdout. Does not require a subcommand. No AI round-trip — read directly from disk.                                                                                          |
 | `--clean_sot <session_id>` | Clean all SoT blocks from a session's persisted files (request.json, session.json, turn_metadata.json). No AI round-trip. The agent `clean_sot` tool handles in-memory cleanup during an active session. |
-| `--subagent_model <model>` | Override the sub-agent model. Applies to `prompt`, `chat`, and `command`. Takes precedence over `subagent_model` in `[providers.X]`. |
+| `--subagent_model <model>` | Override the sub-agent model. Applies to `prompt`, `chat`, and `command`. Takes precedence over `subagent_model` in `[providers.X]`.                                                                     |
 
 Example output:
 
@@ -81,7 +81,7 @@ Examples:
 - `sot-cli prompt`
 - `sot-cli prompt <session_id> --provider openrouter --model x-ai/grok-4.1-fast`
 - `sot-cli --list_sessions`
-- `sot-cli --clean_sot <session_id>`  (removes persisted SoT blocks; for in-memory cleanup inside an active session use the `clean_sot` tool)
+- `sot-cli --clean_sot <session_id>` (removes persisted SoT blocks; for in-memory cleanup inside an active session use the `clean_sot` tool)
 - `sot-cli prompt --subagent_model anthropic/claude-sonnet-4`
 
 #### `sot-cli chat [session_id]`
@@ -144,16 +144,16 @@ No parameters. Returns delegated tasks and status (RUNNING/COMPLETED). Prefer `w
 
 | Setting                             | Default | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `default_command_timeout_seconds`   | `180`   | Hard wall-clock timeout (seconds) applied to every `run_command` invocation. The model cannot override it per call — the limit is a property of the runtime, not a parameter. Raise it only if the host's legitimately slow operations consistently exceed three minutes.                                                                                                                                                                                                                                                                                                       |
-| `binary_check_size`                 | `0`     | Byte threshold used by `read_files` to detect binary content. The reader inspects this many bytes at the start of the file and rejects non-UTF8 input above the threshold, preventing the SoT from being polluted with garbage bytes that would also balloon the context. Set to `0` to skip content-based binary detection — all files are treated as text (known binary extensions like `.png` are still blocked).                                                                                                                                                                                                                                                                                                        |
+| `default_command_timeout_seconds`   | `180`   | Hard wall-clock timeout (seconds) applied to every `run_command` invocation. The model cannot override it per call — the limit is a property of the runtime, not a parameter. Raise it only if the host's legitimately slow operations consistently exceed three minutes.                                                                                                                                                                                                                                                                                                        |
+| `binary_check_size`                 | `0`     | Byte threshold used by `read_files` to detect binary content. The reader inspects this many bytes at the start of the file and rejects non-UTF8 input above the threshold, preventing the SoT from being polluted with garbage bytes that would also balloon the context. Set to `0` to skip content-based binary detection — all files are treated as text (known binary extensions like `.png` are still blocked).                                                                                                                                                             |
 | `show_thinking`                     | `true`  | Stream the model's reasoning/thinking tokens to the terminal as they arrive. Independent of `show_full`; gates **reasoning** output only. Set to `false` if the live reasoning trace is noisy — the model still reasons internally, you just don't see it scroll.                                                                                                                                                                                                                                                                                                                |
 | `show_full`                         | `true`  | Stream tool-call argument chunks (and any other non-reasoning, non-text chunk the provider emits) in real time as the model generates them, verbatim. When disabled, tool calls are only shown as a single assembled line after streaming completes. Provider chunks are never mutated by the runtime; `show_full` only toggles whether they are rendered live.                                                                                                                                                                                                                  |
-| `max_rounds`                        | `25`    | Max tool-call rounds the boss agent can execute per user prompt before the runtime stops it. The bundled example raises this to `250` for power users.                                                                                                                                                                                                                                                                                                                                             |
+| `max_rounds`                        | `25`    | Max tool-call rounds the boss agent can execute per user prompt before the runtime stops it. The bundled example raises this to `250` for power users.                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `delegated_max_rounds`              | `8`     | Max tool-call rounds a sub-agent can execute before being stopped. The bundled example raises this to `80`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `repeat_limit`                      | `3`     | Max consecutive identical rounds (same tools, same arguments) the boss can repeat before the runtime aborts with a loop warning. Set to `0` to disable repeat detection.                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `delegated_repeat_limit`            | `2`     | Same as above but for sub-agents. Tighter on purpose because workers are expected to converge faster on a narrower task. Set to `0` to disable.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `search_default_head_limit`         | `200`   | Default max number of result entries returned by a single `search_code` call when the model does not pass an explicit `head_limit`. Set to `0` for unlimited by default.                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `search_max_line_length`            | `500`   | Per-line truncation length (characters) applied to `search_code` output. Lines longer than this are trimmed in the results to save context. Set to `0` to disable truncation — the model sees full lines.                                                                                                                                                                                                                                                                                                                               |
+| `repeat_limit`                      | `3`     | Max consecutive identical rounds (same tools, same arguments) the boss can repeat before the runtime aborts with a loop warning. Set to `0` to disable repeat detection.                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `delegated_repeat_limit`            | `2`     | Same as above but for sub-agents. Tighter on purpose because workers are expected to converge faster on a narrower task. Set to `0` to disable.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `search_default_head_limit`         | `200`   | Default max number of result entries returned by a single `search_code` call when the model does not pass an explicit `head_limit`. Set to `0` for unlimited by default.                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `search_max_line_length`            | `500`   | Per-line truncation length (characters) applied to `search_code` output. Lines longer than this are trimmed in the results to save context. Set to `0` to disable truncation — the model sees full lines.                                                                                                                                                                                                                                                                                                                                                                        |
 | `search_timeout_seconds`            | `30`    | Hard timeout (seconds) for a single `search_code` invocation (ripgrep subprocess or Python fallback). Keeps pathological patterns from hanging a turn.                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `reasoning_char_budget`             | `0`     | Hard cap on streamed reasoning/thinking characters per turn for the boss agent. When the cumulative reasoning channel exceeds this budget during a single stream, the runtime cuts the provider connection, prints a yellow `⚠  reasoning budget exceeded` warning, and lets the tool loop advance. Protects against models that get stuck in eternal "let me reconsider…" loops inside a single response. Set to `0` to disable the cap.                                                                                                                                        |
 | `delegated_reasoning_char_budget`   | `0`     | Same cap applied to sub-agent turns. Typically smaller than the boss budget because delegated workers are expected to execute narrow tasks and should not spend long reasoning windows before acting. Set to `0` to disable.                                                                                                                                                                                                                                                                                                                                                     |
@@ -178,13 +178,12 @@ Every provider section accepts the same five base fields:
 
 Every time `bootstrap_runtime()` runs (i.e., every `sot-cli` invocation), the module silently compares the user's `sot.toml` against `sot.example.toml`. New keys from the example are added with their default values; keys removed from the example are dropped. User values are **never** overwritten. A timestamped backup (`sot.toml.bak.*`) is created before any write. This is fully automatic — no CLI flags, no noise.
 
-
 ### Optional fields per provider
 
-| Field                       | Where it applies       | Effect                                                                                                                                                                                                                                                                             |
-| --------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reasoning_effort`          | `openrouter`           | OpenRouter uses nested `"reasoning": {"effort": "<level>"}`. Silently ignored on non-reasoning upstreams. Accepted: `"none"`-`"xhigh"`.                                                                                       |
-| `http_referer`, `app_title` | `openrouter`           | Forwarded as `HTTP-Referer` and `X-OpenRouter-Title` headers (used by OpenRouter for app attribution and rankings).                                                                                                                                                                |
+| Field                       | Where it applies | Effect                                                                                                                                  |
+| --------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `reasoning_effort`          | `openrouter`     | OpenRouter uses nested `"reasoning": {"effort": "<level>"}`. Silently ignored on non-reasoning upstreams. Accepted: `"none"`-`"xhigh"`. |
+| `http_referer`, `app_title` | `openrouter`     | Forwarded as `HTTP-Referer` and `X-OpenRouter-Title` headers (used by OpenRouter for app attribution and rankings).                     |
 
 ### Supported provider names
 
@@ -456,13 +455,15 @@ It is never persisted into the `chat_history`. This mechanism provides the model
 The runtime compresses past tool activity between turns to save tokens. Two mechanisms:
 
 **Automatic compression (every turn):**
+
 - `write_file` and `edit_files` calls that succeeded (and were the only tool in that assistant message) are replaced by a single `user`-role line:
   `SYSTEM MESSAGE: write_file path=... sot=tracked_unless_detached result="..." reasoning="..."`.
-- Multiple calls in the same round are joined with ` | `.
+- Multiple calls in the same round are joined with `|`.
 - The `reasoning` of tool-bearing assistant messages is truncated to `[tools].compression_reasoning_trunc_chars` chars (default 240).
 - Failed tool calls are never compressed. The active turn is never compressed.
 
 **Hyper-compression (on demand via `--hypercompress` flag):**
+
 - Reduces chat history size by up to ~70% with zero information loss — tool names, success/failure status, and error descriptions are preserved in a compact summary. The final assistant answer is kept verbatim.
 - Collapses whole turn sequences (user prompt → multiple tool calls → final text reply) into:
   `SYSTEM MESSAGE: Assistant requested tools this turn: <tool> (<status>), ...`.
@@ -526,10 +527,24 @@ Inspect the current session: provider, model, temperature, max output tokens, an
 
 Change runtime parameters for future turns in the current session: `title`, `provider`, `model`, `temperature`, `max_output_tokens`. At least one field required.
 
-## Known current limitations
+## Known issues
 
-1. Resume/recovery currently depends on reconstructing `chat_history` and SoT state from persisted request/response artifacts.
-2. `edit_files` is a surgical text mutator (text-match, line-range, or insert mode), atomic per file and batchable across many files in one call. It is not a regex engine nor an AST editor.
-3. `read_files` reads text files in full into the SoT.
-4. `search_code` requires [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) to be installed and available in PATH.
-5. Archive files (`zip`, `tar`, `gz`, etc.) cannot be read directly. The model receives a format-specific error with the correct `run_command` invocation to list or extract contents.
+### Switching between models or providers on a resumed session
+
+Tool call argument formats and JSON validation strictness vary across upstream
+providers.
+
+If an error is displayed HTTP 400 with a body referencing
+malformed JSON at a specific character position:
+
+    {"error":{"message":"Provider returned error","code":400,
+     "metadata":{"raw":"{\"error\":{\"code\":\"400\",\"message\":\
+     "unexpected end of data: line 1 column NNNN (char NNNN)\" ..."}
+
+The fix is to collapse past tool activity before switching models:
+
+    sot-cli prompt <session_id> --hypercompress
+
+Hyper-compression rewrites closed-turn tool activity into compact
+`SYSTEM MESSAGE:` lines, leaving a clean `user`/`assistant` history that is
+compatible with any provider.
