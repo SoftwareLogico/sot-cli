@@ -16,6 +16,7 @@ from typing import Any
 from sot_cli.utils.dates import _utc_now_iso
 from sot_cli.tools.utils.path_helpers import resolve_path
 from sot_cli.tools.utils.validators import _require_string
+from sot_cli.tools.utils.validators import _normalize_timeout_seconds
 
 
 COMMAND_STATUS_COMPLETED = "completed"
@@ -442,6 +443,11 @@ def execute_run_command(
     if not cwd.exists() or not cwd.is_dir():
         raise NotADirectoryError(f"Working directory does not exist or is not a directory: {cwd}")
 
+    timeout_seconds = _normalize_timeout_seconds(
+        arguments.get("timeout_seconds"),
+        default_command_timeout_seconds,
+    )
+
     process_args = _shell_command(command)
     artifact_paths = _create_command_artifact_paths(logs_dir, session_id)
 
@@ -450,6 +456,6 @@ def execute_run_command(
         cwd,
         process_args,
         artifact_paths,
-        default_command_timeout_seconds,
+        timeout_seconds,
         stdin_bytes,
     )

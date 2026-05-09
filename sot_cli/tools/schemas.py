@@ -135,6 +135,7 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                         "command": {"type": "string", "description": "Shell command to run."},
                         "stdin": {"type": "string", "description": "Optional text to feed to the process stdin. Use for passwords, interactive prompts, or piped input."},
                         "cwd": {"type": "string", "description": "Optional absolute or project-relative working directory."},
+                        "timeout_seconds": {"type": "integer", "minimum": 0, "description": "Optional timeout in seconds. 0 = no timeout (infinite). Default is taken from sot.toml [tools].default_command_timeout_seconds = 180."},
                     },
                     "required": ["command"],
                     "additionalProperties": False,

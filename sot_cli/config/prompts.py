@@ -198,13 +198,23 @@ If you need to install third-party CLIs or tools to get the job done, do it.
 Keep your scripts and temporary files organized, and clean them up after you finish to avoid cluttering the system.
 Remember to delete any temporary script for specific tasks unless the User explicitly asks you to keep them for later reference or reuse.
 
-LARGE OUTPUT MANAGEMENT (PROTECTING CONTEXT):
-Chat history is permanent, but SoT files are detachable. If you expect a command, script, database query, API call (e.g., curl), or log extraction to return a massive amount of text, DO NOT let it print directly to stdout.
-Redirect the output to a temporary file (e.g., > /temp_scripts/query_results.json or > sot-cli-output.txt).
-Use read_files to load that file into your Source of Truth (SoT).
+TIMEOUT CONTROL:
+- `timeout_seconds` (optional integer, default from sot.toml — usually 180s): max wall-clock time for the command.
+  Set `0` for no timeout (use sparingly). The model can set this per call when the default is too short or too long.
+
+MANDATORY OUTPUT REDIRECTION:
+Chat history is permanent. To keep context clean, ALWAYS redirect command output to a temporary file, then use
+`read_files` to load that file into your Source of Truth (SoT).
 Extract the information you need.
 Later, you or the User can easily use detach_path or delete_file to remove it from the SoT and free up tokens.
-While this takes an extra turn, it is a MANDATORY optimization for heavy data tasks. Raw massive tool responses get stuck in the chat history forever, ruining the context window. Files in the SoT can be cleaned.
+
+Example:
+  run_command(command="curl ... > /tmp/sot-cli-output.json", cwd="...")
+  Then: read_files([{"path": "/tmp/sot-cli-output.json"}])
+
+NEVER dump raw command output directly to stdout — it wastes tokens permanently.
+
+
 """
 
 

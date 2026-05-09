@@ -518,7 +518,15 @@ async def run_tool_loop(
             cached_execution = same_round_cache.get(tool_signature)
 
             if cached_execution is None:
-                tool_call_id, tool_result = await registry.execute_tool_call(tool_call)
+                if tool_name == "run_command":
+                    with console.status(
+                        "",
+                        spinner="sot_robot",
+                        spinner_style="bold bright_cyan",
+                    ):
+                        tool_call_id, tool_result = await registry.execute_tool_call(tool_call)
+                else:
+                    tool_call_id, tool_result = await registry.execute_tool_call(tool_call)
                 executed_any_tool = True
 
                 console.print(f"[dim]tool {tool_result.name} -> {'error' if tool_result.is_error else 'ok'}[/dim]")
