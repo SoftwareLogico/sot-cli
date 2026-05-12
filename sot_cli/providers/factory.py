@@ -16,6 +16,17 @@ def create_provider_adapter(config: AppConfig, provider_name: ProviderName, mode
         if app_title:
             extra_headers["X-OpenRouter-Title"] = app_title
 
+    if provider_name == "bedrock":
+        region = str(provider.extra.get("region", "us-east-1")).strip()
+        effective_base_url = provider.base_url or f"https://bedrock-mantle.{region}.api.aws/v1"
+        return OpenAICompatibleAdapter(
+            name=provider_name,
+            base_url=effective_base_url,
+            api_key=provider.api_key,
+            model=effective_model,
+            extra_headers=extra_headers,
+        )
+
     return OpenAICompatibleAdapter(
         name=provider_name,
         base_url=provider.base_url,

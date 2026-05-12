@@ -152,6 +152,17 @@ subagent_model = ""                  # optional model for delegated sub-agents (
 temperature = 0.7
 max_output_tokens = 32768
 
+# ── Amazon Bedrock ──────────────────────────────────────────────────
+#  AWS Bedrock via Mantle (OpenAI-compatible endpoint).
+[providers.bedrock]
+region = "us-east-1"
+# base_url is auto-resolved to https://bedrock-mantle.{region}.api.aws/v1
+model = "qwen.qwen3-235b-a22b-2507"
+subagent_model = ""                  # optional model for delegated sub-agents (empty = use main model)
+temperature = 0.7
+max_output_tokens = 8192
+
+
 # ── Ollama (local) ─────────────────────────────────────────────────────
 #  Run models locally with Ollama. Just point to your Ollama server.
 [providers.ollama]

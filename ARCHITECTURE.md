@@ -65,7 +65,7 @@ These flags work with any command or on their own:
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--config <path>`          | Path to `sot.toml` config file.                                                                                                                                                                          |
 | `--list_sessions`          | Dump all sessions as JSON to stdout. Does not require a subcommand. No AI round-trip — read directly from disk.                                                                                          |
-| `--clean_sot <session_id>` | Clean all SoT blocks from a session's persisted files (request.json, session.json, turn_metadata.json). No AI round-trip. The agent `clean_sot` tool handles in-memory cleanup during an active session. |
+| `--clean_sot <session_id>` | Clean all SoT blocks from a session's persisted files (request.json, payload.json, session.json, turn_metadata.json). No AI round-trip. The agent `clean_sot` tool handles in-memory cleanup during an active session. |
 | `--subagent_model <model>` | Override the sub-agent model. Applies to `prompt`, `chat`, and `command`. Takes precedence over `subagent_model` in `[providers.X]`.                                                                     |
 
 Example output:
@@ -92,7 +92,7 @@ Interactive main loop (Boss agent context).
 Supported flags:
 
 - `--title <text>`: set title for a new session.
-- `--provider <lmstudio|openrouter|openai|ollama|nvidia>`: provider override.
+- `--provider <lmstudio|openrouter|openai|ollama|nvidia|bedrock>`: provider override.
 - `--model <name>`: model override.
 - `--no-tools`: disables tool loop (plain chat behavior).
 - `--subagent_model <model>`: override the sub-agent model for delegated tasks.
@@ -117,7 +117,7 @@ One-shot turn runner (automation/multi-agent primitive).
 
 Supported flags:
 
-- `--provider <lmstudio|openrouter|openai|ollama|nvidia>`
+- `--provider <lmstudio|openrouter|openai|ollama|nvidia|bedrock>`
 - `--model <name>`
 - `--no-tools`
 - `--disable-delegation`: removes `delegate_task` from available tools to avoid recursion loops.
@@ -212,9 +212,9 @@ Every time `bootstrap_runtime()` runs (i.e., every `sot-cli` invocation), the mo
 
 ### Supported provider names
 
-`lmstudio`, `openrouter`, `openai`, `ollama`, `nvidia`. New names can be added to `KNOWN_PROVIDERS` in `sot_cli/config/app.py`; the same OpenAI-compatible adapter handles them all. Note: OpenAI's `reasoning_effort` field doesn't work with tools in Chat Completions (use Responses API instead); `sot-cli` uses Chat Completions only, so `reasoning_effort` is only relayed for OpenRouter.
+`lmstudio`, `openrouter`, `openai`, `ollama`, `nvidia`, `bedrock`. New names can be added to `KNOWN_PROVIDERS` in `sot_cli/config/app.py`; the same OpenAI-compatible adapter handles them all. Note: OpenAI's `reasoning_effort` field doesn't work with tools in Chat Completions (use Responses API instead); `sot-cli` uses Chat Completions only, so `reasoning_effort` is only relayed for OpenRouter.
 
-`lmstudio`, `openrouter`, `openai`, `ollama`, `nvidia`. New names can be added to `KNOWN_PROVIDERS` in `sot_cli/config/app.py`; the same OpenAI-compatible adapter handles them all.
+`lmstudio`, `openrouter`, `openai`, `ollama`, `nvidia`, `bedrock`. New names can be added to `KNOWN_PROVIDERS` in `sot_cli/config/app.py`; the same OpenAI-compatible adapter handles them all.
 
 ### Provider capability detection & Context Memory Management
 
@@ -224,6 +224,7 @@ For providers that expose a queryable models endpoint, the adapter performs a on
 - `openrouter`: queries `/models` and reads `architecture.input_modalities` and `supported_parameters` to derive tool/vision/PDF/audio/video flags.
 - `ollama`: queries `/api/ps` to surface the running model's **allocated context length**, then `/api/show` for parameter count and quantization.
 - `nvidia`: queries `/models` for connectivity verification (the endpoint returns a flat list with no architecture metadata), and assumes tool support.
+- `bedrock`: queries `GET /v1/models` via httpx to verify Mantle endpoint connectivity. All models default to 256k context with vision+PDF+tools enabled. Falls back to same defaults on any error.
 - `openai`: skipped — uses the assumed defaults listed above.
 - Unknown OpenAI-compatible names: skipped — minimal `supports_tools=true` default.
 

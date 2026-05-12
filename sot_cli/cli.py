@@ -1143,7 +1143,7 @@ Examples:
   sot-cli --run_task agent_1 "find the bug"
 """,
     )
-    _PROVIDER_CHOICES = ["lmstudio", "openrouter", "openai", "xai", "ollama", "nvidia"]
+    _PROVIDER_CHOICES = ["lmstudio", "openrouter", "openai", "xai", "ollama", "nvidia", "bedrock"]
 
     # ── Global options ──
     parser.add_argument("--config", default=None, help="Path to sot.toml")
@@ -1213,12 +1213,13 @@ def _print_status(runtime: AppRuntime) -> None:
 def _clean_sot_session(session_id: str, sessions_dir=None):
     """Remove all SoT data from a session's persisted JSON files.
 
-    Cleans three files:
+    Cleans four files:
       1. request.json   — drops every ``user`` message whose content
                           starts with ``=== SOURCE OF TRUTH ===`` or
                           ``=== CURRENT METADATA ===``.
-      2. session.json  — empties ``source_entries``.
-      3. turn_metadata.json — sets ``SoT Tracked Files`` to 0 and
+      2. payload.json   — deleted (rebuilt fresh on next turn).
+      3. session.json  — empties ``source_entries``.
+      4. turn_metadata.json — sets ``SoT Tracked Files`` to 0 and
                                ``sot_files`` to ``[]``.
     """
     from pathlib import Path
@@ -1251,14 +1252,29 @@ def _clean_sot_session(session_id: str, sessions_dir=None):
                 for msg in messages:
                     role = msg.get("role", "")
                     content = msg.get("content", "")
+                    # Handle string content (plain text SoT/Metadata)
+                    is_sot = False
                     if role == "user" and isinstance(content, str):
                         stripped = content.lstrip()
                         if stripped.startswith(SOT_PREFIX):
+                            is_sot = True
                             cleaned_request += 1
-                            continue
-                        if stripped.startswith(META_PREFIX):
+                        elif stripped.startswith(META_PREFIX):
+                            is_sot = True
                             cleaned_metadata += 1
-                            continue
+                    # Handle list content (rich SoT with images)
+                    if role == "user" and isinstance(content, list) and content:
+                        first_block = content[0]
+                        if isinstance(first_block, dict) and first_block.get("type") == "text":
+                            first_text = (first_block.get("text", "") or "").lstrip()
+                            if first_text.startswith(SOT_PREFIX):
+                                is_sot = True
+                                cleaned_request += 1
+                            elif first_text.startswith(META_PREFIX):
+                                is_sot = True
+                                cleaned_metadata += 1
+                    if is_sot:
+                        continue
                     filtered.append(msg)
                 if cleaned_request or cleaned_metadata:
                     backup = request_file.with_suffix(".json.bak")
@@ -1289,6 +1305,16 @@ def _clean_sot_session(session_id: str, sessions_dir=None):
             pass
 
     # --- 3. turn_metadata.json ---
+
+
+    # --- 3b. payload.json (delete — rebuilt fresh) ---
+    payload_file = session_path / "payload.json"
+    if payload_file.is_file():
+        try:
+            payload_file.unlink()
+        except OSError:
+            pass
+
     metadata_file = session_path / "turn_metadata.json"
     if metadata_file.is_file():
         try:

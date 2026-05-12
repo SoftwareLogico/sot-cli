@@ -592,6 +592,8 @@ class OpenAICompatibleAdapter:
             await self._detect_ollama_capabilities()
         elif self.name == "nvidia":
             await self._detect_nvidia_capabilities()
+        elif self.name == "bedrock":
+            await self._detect_bedrock_capabilities()
         elif self.name == "openai":
             # OpenAI's /v1/models endpoint doesn't expose tool/modality flags or
             # context windows in a useful shape, and the same `openai` provider
@@ -809,6 +811,37 @@ class OpenAICompatibleAdapter:
             supports_video=False,
         )
 
+    async def _detect_bedrock_capabilities(self) -> None:
+        """Amazon Bedrock Mantle: verify connectivity via /v1/models.
+        All models default to 256k context and multimodal (vision+PDF+tools).
+        Falls back to sensible defaults on any error."""
+        try:
+            headers = {"Authorization": f"Bearer {self.api_key}", **self.extra_headers}
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{self.base_url}/models", headers=headers)
+                if resp.status_code != 200:
+                    raise RuntimeError(f"Bedrock Mantle returned HTTP {resp.status_code}")
+                models_data = resp.json().get("data", [])
+                if not models_data:
+                    raise RuntimeError("No models returned from Bedrock Mantle")
+        except Exception:
+            # Cannot reach Mantle — fall back to optimistic defaults
+            self.capability = ProviderCapability(
+                supports_tools=True,
+                supports_images=True,
+                supports_pdfs=True,
+                context_length=256_000,
+            )
+            return
+
+        self.capability = ProviderCapability(
+            supports_tools=True,
+            supports_images=True,
+            supports_pdfs=True,
+            context_length=256_000,
+        )
+
+
     async def stream_turn(self, request: ProviderRequest):
         url = f"{self.base_url}/chat/completions"
         resolved_model = self.model or request.model
@@ -821,6 +854,7 @@ class OpenAICompatibleAdapter:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         _write_session_json("request", {"url": url, "payload": payload}, session_id=request.session_id)
+        _write_session_json("payload", payload, session_id=request.session_id)
 
         raw_chunks: list[dict[str, Any]] = []
 
@@ -876,6 +910,7 @@ class OpenAICompatibleAdapter:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         _write_session_json("request", {"url": url, "payload": payload}, session_id=request.session_id)
+        _write_session_json("payload", payload, session_id=request.session_id)
 
         timeout = httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=60.0)
         try:

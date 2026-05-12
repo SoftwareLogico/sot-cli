@@ -141,7 +141,7 @@ def execute_delegate_task(arguments: dict[str, Any], runtime: AppRuntime, parent
     command = [
         sys.executable, "-m", "sot_cli",
         "--config", str(runtime.paths.config_file),
-        "run_task", agent_id, wrapped_task_prompt,
+        "--run_task", agent_id, wrapped_task_prompt,
     ]
 
     new_agent_dir.mkdir(parents=True, exist_ok=True)

@@ -11,7 +11,7 @@ else:
     import tomli as tomllib  # pyright: ignore[reportMissingImports]
 
 
-ProviderName = Literal["lmstudio", "openrouter", "openai", "xai", "ollama"]
+ProviderName = Literal["lmstudio", "openrouter", "openai", "xai", "ollama", "nvidia", "bedrock"]
 
 
 def _read_default_config_template() -> str:
@@ -32,7 +32,7 @@ def _read_default_config_template() -> str:
 
 
 DEFAULT_CONFIG_TEMPLATE = _read_default_config_template()
-KNOWN_PROVIDERS: tuple[ProviderName, ...] = ("lmstudio", "openrouter", "openai", "xai", "ollama", "nvidia")
+KNOWN_PROVIDERS: tuple[ProviderName, ...] = ("lmstudio", "openrouter", "openai", "xai", "ollama", "nvidia", "bedrock")
 
 
 class ConfigError(ValueError):
@@ -185,6 +185,7 @@ def _parse_app_config(raw: dict[str, Any], keys_raw: dict[str, Any] | None = Non
                     "base_url",
                     "api_key",
                     "model",
+                    "subagent_model",
                     "temperature",
                     "max_output_tokens",
                 }

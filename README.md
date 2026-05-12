@@ -26,7 +26,7 @@ The name `sot-cli` is a direct nod to the architectural pattern it is built arou
 - **🤖 Async Multi-Agent**: Delegate trial-and-error to cheap sub-agents (empty ctx).
 - **⚡ Batch Orchestration**: Multi-tools + bash/Python scripts in ONE turn.
 - **🔧 Full Tools**: 19 built-in (incl. unrestricted shell, regex code search, batched multi-file surgical edits) + MCP extensible.
-- **🌐 Multi-Provider**: Switch OpenRouter/LMStudio/OpenAI/Ollama/NVIDIA live.
+- **🌐 Multi-Provider**: Switch OpenRouter/LMStudio/OpenAI/Ollama/NVIDIA/Bedrock live.
 - **💰 Native Prompt Caching**: Payload architecture designed for prefix-matching, saving up to 50% API costs on long histories by caching static dialogue and keeping dynamic files at the bottom.
 - **🧠 Context Awareness**: Real-time context limit tracking (Allocated vs. Max) with visual terminal warnings to prevent token overflow.
 
@@ -118,6 +118,8 @@ sot-cli is compatible with any OpenAI‑compatible (OpenAI‑like) API. The foll
 - ✅ Ollama (local)
 - ✅ NVIDIA
 
+- ✅ Bedrock
+
 We will continue adding and testing more providers — contributions welcome.
 
 ### Add API keys
@@ -142,6 +144,9 @@ api_key = ""
 
 [providers.nvidia]
 api_key = "nvapi-your-key-here"
+
+[providers.bedrock]
+api_key = "your-bedrock-api-key"
 ```
 
 ### Configure providers
@@ -179,6 +184,13 @@ base_url = "https://integrate.api.nvidia.com/v1"
 model = "qwen/qwen3-coder-480b-a35b-instruct"
 temperature = 0.7
 max_output_tokens = 32768
+
+[providers.bedrock]
+# base_url is auto-resolved from region to https://bedrock-mantle.{region}.api.aws/v1
+region = "us-east-1"
+model = "qwen.qwen3-235b-a22b-2507"
+temperature = 0.7
+max_output_tokens = 8192
 ```
 
 For full per-provider field semantics (including OpenAI-specific quirks like `max_completion_tokens` and tool schema sanitization), see [ARCHITECTURE.md → Provider configuration](ARCHITECTURE.md#provider-configuration-providersx).

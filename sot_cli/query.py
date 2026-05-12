@@ -539,7 +539,7 @@ async def run_tool_loop(
             cached_execution = same_round_cache.get(tool_signature)
 
             if cached_execution is None:
-                if tool_name == "run_command":
+                if tool_name in {"run_command", "delegate_task"}:
                     with console.status(
                         "",
                         spinner="sot_robot",
