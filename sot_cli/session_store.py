@@ -33,6 +33,7 @@ class SessionRecord:
     created_at: str
     updated_at: str
     subagent_model: str = ""
+    reasoning_effort: str | None = None
     temperature: float | None = None
     max_output_tokens: int | None = None
     source_entries: list[SourceEntry] = field(default_factory=list)
@@ -51,6 +52,7 @@ class SessionStore:
         temperature: float | None = None,
         max_output_tokens: int | None = None,
         subagent_model: str = "",
+        reasoning_effort: str | None = None,
     ) -> SessionRecord:
         session_id = self._reserve_session_id()
         timestamp = _utc_now().isoformat()
@@ -60,6 +62,7 @@ class SessionStore:
             provider=provider,
             model=model,
             subagent_model=subagent_model,
+            reasoning_effort=reasoning_effort,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             created_at=timestamp,
@@ -247,6 +250,7 @@ class SessionStore:
             provider=payload["provider"],
             model=payload["model"],
             subagent_model=payload.get("subagent_model", ""),
+            reasoning_effort=payload.get("reasoning_effort"),
             temperature=payload.get("temperature"),
             max_output_tokens=payload.get("max_output_tokens"),
             created_at=payload["created_at"],

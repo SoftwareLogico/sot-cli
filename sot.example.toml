@@ -143,6 +143,10 @@ app_title = "sot-cli"
 # reasoning effort hint ("none"|"low"|"medium"|"high"|"xhigh")
 # OpenRouter nested format: {"reasoning": {"effort": "..."}}
 reasoning_effort = "medium"
+# OpenRouter provider selection — restrict which upstream serves the model.
+# Examples: "Anthropic", "Google", "Mistral", "DeepSeek", etc.
+# Leave empty for automatic routing (default).
+provider_selection = ""
 # ── NVIDIA NIM ─────────────────────────────────────────────────────────
 #  NVIDIA's hosted API for their optimized models.
 [providers.nvidia]
@@ -153,14 +157,14 @@ temperature = 0.7
 max_output_tokens = 32768
 
 # ── Amazon Bedrock ──────────────────────────────────────────────────
-#  AWS Bedrock via Mantle (OpenAI-compatible endpoint).
+#  AWS Bedrock via Converse API (native, with thinking/reasoning support).
 [providers.bedrock]
 region = "us-east-1"
-# base_url is auto-resolved to https://bedrock-mantle.{region}.api.aws/v1
-model = "qwen.qwen3-235b-a22b-2507"
-subagent_model = ""                  # optional model for delegated sub-agents (empty = use main model)
+model = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+subagent_model = "moonshotai.kimi-k2.5"
 temperature = 0.7
-max_output_tokens = 8192
+max_output_tokens = 32768
+reasoning_effort = "high"
 
 
 # ── Ollama (local) ─────────────────────────────────────────────────────

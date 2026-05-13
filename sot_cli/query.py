@@ -348,6 +348,7 @@ async def run_tool_loop(
             tools=[],
             conversation_messages=_build_payload_messages(conversation_state, request),
             compression_reasoning_trunc_chars=request.compression_reasoning_trunc_chars,
+            reasoning_effort=request.reasoning_effort,
         )
         turn_result = await run_single_turn(
             adapter,
@@ -442,6 +443,7 @@ async def run_tool_loop(
             tools=registry.schemas(),
             conversation_messages=payload_messages,
             compression_reasoning_trunc_chars=request.compression_reasoning_trunc_chars,
+            reasoning_effort=request.reasoning_effort,
         )
 
         # ── SoT Step 5: Inference ──
@@ -645,6 +647,8 @@ def _refresh_request_from_session(runtime: AppRuntime, request: ProviderRequest)
         request.temperature = session.temperature
     if hasattr(session, "max_output_tokens") and session.max_output_tokens is not None:
         request.max_output_tokens = session.max_output_tokens
+    if hasattr(session, "reasoning_effort") and session.reasoning_effort is not None:
+        request.reasoning_effort = session.reasoning_effort
     # Rebuild system prompt and rules so user overrides stay current; respect sub-agent mode
     request.system_prompt = build_system_prompt()
     request.orchestration_rules = build_orchestration_rules(is_sub_agent=request.disable_delegation)
