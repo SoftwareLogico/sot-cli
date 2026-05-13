@@ -96,6 +96,15 @@ python -m sot_cli
 
 Follow the steps the first time, have Fun!!
 
+### Update
+
+Make sure to pull the latest changes and update dependencies with `pip install -e .` to get the newest features and fixes.
+
+```bash
+git pull origin main
+pip install -e .
+```
+
 ## 🛠 Manual Installation
 
 If you would rather wire things up by hand instead of going through the first-run wizard,
