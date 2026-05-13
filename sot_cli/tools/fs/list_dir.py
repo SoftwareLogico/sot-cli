@@ -205,7 +205,7 @@ def _matches_filters(entry: dict[str, Any], filters: dict[str, Any]) -> bool:
 
 def execute_list_dir(arguments: dict[str, Any], root_dir: Path) -> dict[str, Any]:
     path = resolve_path(_require_string(arguments, "path"), root_dir)
-    recursive = True
+    recursive = arguments.get("recursive", False)
     follow_symlinks = bool(arguments.get("follow_symlinks", False))
     content_contains = _normalize_optional_string(arguments, "content_contains")
     content_case_sensitive = bool(arguments.get("content_case_sensitive", False))
@@ -359,7 +359,7 @@ def execute_list_dir(arguments: dict[str, Any], root_dir: Path) -> dict[str, Any
                 should_recurse = False
             # Skip directories the OS already told us we can't read — saves a
             # redundant iterdir() that would just return [] anyway.
-            if should_recurse and not blocked_by_os:
+            if should_recurse and not blocked_by_os and recursive:
                 collect(child, depth + 1)
 
     collect(path, 1)
@@ -382,7 +382,7 @@ def execute_list_dir(arguments: dict[str, Any], root_dir: Path) -> dict[str, Any
 
     return {
         "path": str(path),
-        "recursive": recursive,
+        "recursive": bool(recursive),
         "include_hidden": True,
         "follow_symlinks": follow_symlinks,
         "search_mode": bool(normalized_filters),

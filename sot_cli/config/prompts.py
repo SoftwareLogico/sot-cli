@@ -122,7 +122,7 @@ Usage:
 - The application value is passed through generically. Use the exact application name, command name, or executable path that best matches the user's request on the current OS."""
 
 LIST_DIR_PROMPT = """\
-List and search files/folders inside a directory. Use it for both: full listings and targeted searches. This tool is always recursive and always includes hidden files; there is no hidden-file filtering and no built-in result limit. \
+List and search files/folders inside a directory. Use it for both: full listings and targeted searches. By default this lists only the top-level contents (not recursive); pass `recursive=true` to recurse into subdirectories. Always includes hidden files; there is no hidden-file filtering and no built-in result limit. \
 It returns files, folders, and symlinks with full absolute paths, relative paths, folder/file names, depth, extension, size, timestamps, hidden status, symlink status, and symlink targets when available. \
 Prefer this tool over run_command for discovery/filtering by extension, name, path, size, and optional content text matching before reading or opening files. \
 You can use it as a search tool with these optional filters: \
