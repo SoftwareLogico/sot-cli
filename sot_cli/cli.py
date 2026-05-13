@@ -1717,6 +1717,7 @@ async def _run_prompt(
             temperature=None,
             max_output_tokens=None,
             subagent_model=resolved_subagent,
+            reasoning_effort=provider_config.extra.get("reasoning_effort") or None,
         )
 
     active_provider = record.provider

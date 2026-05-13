@@ -540,7 +540,9 @@ def _sanitize_messages_for_provider(
 
 
 def _write_session_json(label: str, data: Any, session_id: str = "") -> Path:
-    """Write a JSON blob to the session directory."""
+    """Write a JSON blob to the session directory.
+    Also writes a standalone payload.json when the data is a request wrapper.
+    """
     import os
     from pathlib import Path as _Path
 
@@ -559,6 +561,13 @@ def _write_session_json(label: str, data: Any, session_id: str = "") -> Path:
     path = base / f"{label}.json"
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+
+    # Also write a standalone payload.json for easy Postman/curl debugging
+    if label == "request" and isinstance(data, dict) and "payload" in data:
+        payload_path = base / "payload.json"
+        with open(payload_path, "w", encoding="utf-8") as f:
+            json.dump(data["payload"], f, ensure_ascii=True, indent=2, default=str)
+
     return path
 
 
@@ -570,12 +579,14 @@ class OpenAICompatibleAdapter:
         api_key: str,
         model: str = "",
         extra_headers: dict[str, str] | None = None,
+        provider_selection: str | None = None,
     ) -> None:
         self.name = name
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.extra_headers = extra_headers or {}
+        self.provider_selection = provider_selection
         # Start with nothing — detect_capabilities will populate this
         self.capability = ProviderCapability()
         self._capabilities_detected = False
@@ -846,6 +857,8 @@ class OpenAICompatibleAdapter:
         url = f"{self.base_url}/chat/completions"
         resolved_model = self.model or request.model
         payload = build_chat_completions_payload(request, resolved_model)
+        if self.name == "openrouter" and self.provider_selection:
+            payload["provider"] = {"order": [self.provider_selection], "allow_fallbacks": False}
         headers = {
             "Content-Type": "application/json",
             **self.extra_headers,
@@ -902,6 +915,8 @@ class OpenAICompatibleAdapter:
         resolved_model = self.model or request.model
         payload = build_chat_completions_payload(request, resolved_model)
         payload["stream"] = False
+        if self.name == "openrouter" and self.provider_selection:
+            payload["provider"] = {"order": [self.provider_selection], "allow_fallbacks": False}
         headers = {
             "Content-Type": "application/json",
             **self.extra_headers,
@@ -1056,8 +1071,10 @@ def build_chat_completions_payload(request: ProviderRequest, resolved_model: str
             tools = [_sanitize_tool_schema_for_openai(t) for t in tools]
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
-    # OpenRouter reasoning effort — nested object format
-    if is_openrouter and request.reasoning_effort:
+    # OpenRouter / Bedrock reasoning effort — nested object format
+    # OpenRouter docs: https://openrouter.ai/docs/features/reasoning
+    # Bedrock Mantle is OpenAI-compatible and accepts the same format.
+    if (is_openrouter or request.provider_name == "bedrock") and request.reasoning_effort:
         payload["reasoning"] = {"effort": request.reasoning_effort}
 
 

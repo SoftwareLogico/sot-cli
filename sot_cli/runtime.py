@@ -32,7 +32,7 @@ class AppRuntime:
     async def provider_adapter_async(self, provider_name: str, model: str | None = None) -> ProviderAdapter:
         """Get adapter with capabilities detected from the provider API."""
         adapter = self.provider_adapter(provider_name, model=model)
-        if isinstance(adapter, OpenAICompatibleAdapter) and not adapter._capabilities_detected:
+        if hasattr(adapter, "detect_capabilities") and not getattr(adapter, "_capabilities_detected", False):
             await adapter.detect_capabilities()
         return adapter
 

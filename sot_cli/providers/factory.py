@@ -3,6 +3,7 @@ from __future__ import annotations
 from sot_cli.config import AppConfig, ProviderName
 from sot_cli.providers.base import ProviderAdapter
 from sot_cli.providers.openai_compat import OpenAICompatibleAdapter
+from sot_cli.providers.bedrock_converse import BedrockConverseAdapter
 
 def create_provider_adapter(config: AppConfig, provider_name: ProviderName, model: str | None = None) -> ProviderAdapter:
     provider = config.provider(provider_name)
@@ -15,15 +16,17 @@ def create_provider_adapter(config: AppConfig, provider_name: ProviderName, mode
             extra_headers["HTTP-Referer"] = http_referer
         if app_title:
             extra_headers["X-OpenRouter-Title"] = app_title
+        provider_selection = str(provider.extra.get("provider_selection", "")).strip() or None
+    else:
+        provider_selection = None
 
     if provider_name == "bedrock":
         region = str(provider.extra.get("region", "us-east-1")).strip()
-        effective_base_url = provider.base_url or f"https://bedrock-mantle.{region}.api.aws/v1"
-        return OpenAICompatibleAdapter(
+        return BedrockConverseAdapter(
             name=provider_name,
-            base_url=effective_base_url,
-            api_key=provider.api_key,
             model=effective_model,
+            region=region,
+            api_key=provider.api_key,
             extra_headers=extra_headers,
         )
 
@@ -33,6 +36,7 @@ def create_provider_adapter(config: AppConfig, provider_name: ProviderName, mode
         api_key=provider.api_key,
         model=effective_model,
         extra_headers=extra_headers,
+        provider_selection=provider_selection,
     )
 
 

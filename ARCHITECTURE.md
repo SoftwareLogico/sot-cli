@@ -209,12 +209,13 @@ Every time `bootstrap_runtime()` runs (i.e., every `sot-cli` invocation), the mo
 | --------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `reasoning_effort`          | `openrouter`     | OpenRouter uses nested `"reasoning": {"effort": "<level>"}`. Silently ignored on non-reasoning upstreams. Accepted: `"none"`-`"xhigh"`. |
 | `http_referer`, `app_title` | `openrouter`     | Forwarded as `HTTP-Referer` and `X-OpenRouter-Title` headers (used by OpenRouter for app attribution and rankings).                     |
+| `provider_selection`        | `openrouter`     | Injected as `"provider": "<value>"` in the request payload. Restricts routing to a specific upstream (e.g. `"Anthropic"`, `"Google"`, `"Mistral"`). Leave empty for automatic routing. See [OpenRouter docs](https://openrouter.ai/docs/guides/routing/provider-selection). |
 
 ### Supported provider names
 
 `lmstudio`, `openrouter`, `openai`, `ollama`, `nvidia`, `bedrock`. New names can be added to `KNOWN_PROVIDERS` in `sot_cli/config/app.py`; the same OpenAI-compatible adapter handles them all. Note: OpenAI's `reasoning_effort` field doesn't work with tools in Chat Completions (use Responses API instead); `sot-cli` uses Chat Completions only, so `reasoning_effort` is only relayed for OpenRouter.
 
-`lmstudio`, `openrouter`, `openai`, `ollama`, `nvidia`, `bedrock`. New names can be added to `KNOWN_PROVIDERS` in `sot_cli/config/app.py`; the same OpenAI-compatible adapter handles them all.
+`lmstudio`, `openrouter`, `openai`, `ollama`, `nvidia`, `bedrock`. New names can be added to `KNOWN_PROVIDERS` in `sot_cli/config/app.py`; the same OpenAI-compatible adapter handles them all. Bedrock uses the Converse API (native AWS format) for reasoning/thinking support.
 
 ### Provider capability detection & Context Memory Management
 
@@ -224,7 +225,7 @@ For providers that expose a queryable models endpoint, the adapter performs a on
 - `openrouter`: queries `/models` and reads `architecture.input_modalities` and `supported_parameters` to derive tool/vision/PDF/audio/video flags.
 - `ollama`: queries `/api/ps` to surface the running model's **allocated context length**, then `/api/show` for parameter count and quantization.
 - `nvidia`: queries `/models` for connectivity verification (the endpoint returns a flat list with no architecture metadata), and assumes tool support.
-- `bedrock`: queries `GET /v1/models` via httpx to verify Mantle endpoint connectivity. All models default to 256k context with vision+PDF+tools enabled. Falls back to same defaults on any error.
+- `bedrock`: uses boto3 control plane (`get_foundation_model`) to detect input modalities and infer context length from model family. Falls back to optimistic defaults on any error. **Thinking/reasoning** via `additionalModelRequestFields` is only supported for `us.anthropic.claude-*` (Claude Sonnet/Haiku — uses `thinking.type enabled + budget_tokens + temperature=1.0`), `moonshotai.kimi-k2.5` (Kimi K2.5 — uses `reasoning_config: "high"`), and `zai.glm-5` (GLM-5 — uses `reasoning_config: "high"`). Other models ignore the reasoning parameter silently.
 - `openai`: skipped — uses the assumed defaults listed above.
 - Unknown OpenAI-compatible names: skipped — minimal `supports_tools=true` default.
 
