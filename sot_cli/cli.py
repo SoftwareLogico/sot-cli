@@ -72,6 +72,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         # ESCAPAMOS EL ERROR PARA QUE RICH NO CRASHEE SI EL ERROR CONTIENE CORCHETES
         error_console.print(f"[bold red]Error:[/bold red] {escape(str(exc))}")
+        import traceback
+        error_console.print("[dim]Full traceback:[/dim]")
+        traceback.print_exc()
         return 1
 
 
@@ -193,7 +196,9 @@ def _load_chat_history_from_request_jsons(session_dir: Path) -> list[dict[str, A
     request_path = session_dir / "request.json"
     chunks_path = session_dir / "response-chunks.json"
 
-    if not request_path.exists():
+    if request_path.exists():
+        _debug_log(session_dir, f"Reading request.json from {request_path}")
+    else:
         return None
 
     try:
@@ -229,6 +234,7 @@ def _load_chat_history_from_request_jsons(session_dir: Path) -> list[dict[str, A
             chunks = json.loads(chunks_path.read_text(encoding="utf-8"))
             assistant_msg = _reconstruct_assistant_from_chunks(chunks)
             if assistant_msg:
+                _debug_log(session_dir, f"Reconstructed assistant msg from {len(chunks)} chunks")
                 chat_messages.append(assistant_msg)
         except (json.JSONDecodeError, OSError):
             pass
@@ -240,41 +246,33 @@ def _reconstruct_assistant_from_chunks(chunks: list[dict[str, Any]]) -> dict[str
     text_parts: list[str] = []
     tool_state: dict[int, dict[str, Any]] = {}
 
-    for chunk in chunks:
-        for choice in chunk.get("choices", []):
-            delta = choice.get("delta") or choice.get("message") or {}
-            content = delta.get("content")
-            if isinstance(content, str) and content:
-                text_parts.append(content)
-            for tc in delta.get("tool_calls", []):
-                index = int(tc.get("index", 0))
-                entry = tool_state.setdefault(
-                    index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
-                )
-                if tc.get("id"):
-                    entry["id"] = tc["id"]
-                func = tc.get("function", {})
-                if func.get("name"):
-                    entry["function"]["name"] += func["name"]
-                if func.get("arguments"):
-                    entry["function"]["arguments"] += func["arguments"]
-
-    text = "".join(text_parts)
-    tool_calls = [tool_state[i] for i in sorted(tool_state)] if tool_state else []
-
-    if not text and not tool_calls:
-        return None
-
-    msg: dict[str, Any] = {"role": "assistant", "content": text if text else None}
-    if tool_calls:
-        msg["tool_calls"] = tool_calls
-    return msg
 
 
-def _replay_conversation(history: list[dict[str, Any]]) -> None:
+
+
+
+
+
+
+def _debug_log(session_dir: Path, msg: str) -> None:
+    """Append a line to debug.log in the session directory."""
+    try:
+        log_path = session_dir / "debug.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().isoformat()}] {msg}\n")
+    except Exception:
+        pass
+
+
+def _replay_conversation(history: list[dict[str, Any]], session_dir: Path | None = None) -> None:
     console.print("[dim]─── session history ───[/dim]")
+    if session_dir:
+        _debug_log(session_dir, f"Replaying {len(history)} messages")
     for msg in history:
         role = msg.get("role", "")
+        if session_dir:
+            _debug_log(session_dir, f"  msg role={role} content_type={type(msg.get('content')).__name__}")
         if role == "user":
             content = msg.get("content", "")
             if isinstance(content, str):
@@ -285,11 +283,11 @@ def _replay_conversation(history: list[dict[str, Any]]) -> None:
             if tool_calls:
                 names = [tc.get("function", {}).get("name", "?") for tc in tool_calls]
                 console.print(f"[blue]assistant>[/blue] [dim]called {escape(', '.join(names))}[/dim]")
-            if text:
+            if isinstance(text, str) and text:
                 console.print(f"[blue]assistant>[/blue] {escape(text)}")
         elif role == "tool":
-            content = msg.get("content", "")
-            console.print(f"[dim]tool> {escape(content)}[/dim]")
+            raw = msg.get("content", "")
+            console.print(f"[dim]tool> {escape(str(raw) if not isinstance(raw, str) else raw)}[/dim]")
     console.print("[dim]─── end of history ───[/dim]\n")
 
 
@@ -1217,6 +1215,7 @@ def _clean_sot_session(session_id: str, sessions_dir=None):
       1. request.json   — drops every ``user`` message whose content
                           starts with ``=== SOURCE OF TRUTH ===`` or
                           ``=== CURRENT METADATA ===``.
+                          Also handles list-type content (Bedrock Converse format).
       2. payload.json   — deleted (rebuilt fresh on next turn).
       3. session.json  — empties ``source_entries``.
       4. turn_metadata.json — sets ``SoT Tracked Files`` to 0 and
@@ -1887,8 +1886,10 @@ async def _run_prompt(
     session_dir = runtime.paths.sessions_dir / record.id
     loaded_history = _load_chat_history_from_request_jsons(session_dir)
     if loaded_history:
+        _debug_log(session_dir, f"Loaded {len(loaded_history)} messages from request.json")
         session_state.chat_history = loaded_history
-        _replay_conversation(loaded_history)
+        _replay_conversation(loaded_history, session_dir)
+        _debug_log(session_dir, "Replay completed")
     loaded_sot = load_sot_state_from_request_json(session_dir)
     if loaded_sot is not None:
         session_state.sot = loaded_sot
