@@ -35,6 +35,7 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                     "properties": {
                         "path": {"type": "string", "description": "Absolute path or project-relative path to the directory."},
                         "follow_symlinks": {"type": "boolean", "description": "If true, recurse through symlinked directories."},
+                        "recursive": {"type": "boolean", "description": "If true, recurse into subdirectories. Default false."},
                         "kind": {"type": "string", "enum": ["file", "directory", "symlink", "symlink_file", "symlink_directory"], "description": "Optional kind filter."},
                         "extensions": {"type": "array", "items": {"type": "string"}, "description": "Optional extension filter list. Accept values like '.png' or 'png'. Case-insensitive."},
                         "name_contains": {"type": "string", "description": "Optional case-insensitive substring filter applied to the basename. Supports multiple keywords separated by commas (e.g., 'File1, fILE2, etc') acting as an OR condition."},

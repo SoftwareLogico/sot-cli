@@ -244,11 +244,12 @@ The wizard does not exist for `--provider X` overrides or session resumes (`sot-
 
 ## File Discovery Tool (`list_dir`)
 
-`list_dir` is a dual-purpose tool: it can return broad recursive listings and it can act as a filtered search tool.
+`list_dir` is a dual-purpose tool: it can return broad recursive listings and it can act as a filtered search tool. By default it returns only the top-level contents of a directory; pass `recursive=true` to recurse into subdirectories.
 
 Current behavior:
 
-- Always recursive.
+- **Default:** Non-recursive (top-level only).
+- **Recursive:** Pass `"recursive": true` in the tool arguments.
 - Always includes hidden files.
 - No built-in result limit by default.
 - Returns rich metadata per entry (name, absolute/relative path, type, depth, extension, size, timestamps, hidden/symlink flags, symlink target when available).
