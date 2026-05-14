@@ -22,6 +22,82 @@ def _clean_name(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]", "_", name)[:200]
 
 
+def _normalize_converse_to_openai(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert Converse-format messages to OpenAI format for safe round-trip."""
+    import json, base64
+    result: list[dict[str, Any]] = []
+    for msg in messages:
+        content = msg.get("content")
+        role = msg.get("role", "")
+        if not isinstance(content, list):
+            result.append(msg)
+            continue
+
+        # Detect Converse format vs OpenAI format
+        is_converse = any(
+            isinstance(b, dict) and not b.get("type") and ("text" in b or "toolUse" in b or "toolResult" in b)
+            for b in content[:5]
+        )
+        if not is_converse:
+            result.append(msg)
+            continue
+
+        text_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        tool_call_id: str | None = None
+        tool_result_parts: list[str] = []
+        has_tool_result = False
+
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if "text" in block:
+                txt = block["text"]
+                if txt:
+                    text_parts.append(str(txt))
+            elif "toolUse" in block:
+                tu = block["toolUse"]
+                tc = {
+                    "id": tu.get("toolUseId", ""),
+                    "type": "function",
+                    "function": {
+                        "name": tu.get("name", ""),
+                        "arguments": json.dumps(tu.get("input", {})) if isinstance(tu.get("input"), dict) else str(tu.get("input", "{}")),
+                    },
+                }
+                tool_calls.append(tc)
+            elif "toolResult" in block:
+                has_tool_result = True
+                tr = block["toolResult"]
+                tool_call_id = tr.get("toolUseId", tool_call_id)
+                for tc_block in tr.get("content", []):
+                    if isinstance(tc_block, dict) and "text" in tc_block:
+                        tool_result_parts.append(str(tc_block["text"]))
+            elif "image" in block:
+                text_parts.append("[image data]")
+
+        combined_text = "\n".join(p for p in text_parts if p)
+
+        if has_tool_result:
+            result.append({
+                "role": "tool",
+                "tool_call_id": tool_call_id or "",
+                "content": "\n".join(tool_result_parts),
+            })
+        elif tool_calls:
+            result.append({
+                "role": "assistant",
+                "content": combined_text or None,
+                "tool_calls": tool_calls,
+            })
+        else:
+            result.append({
+                "role": role,
+                "content": combined_text,
+            })
+    return result
+
+
 def _translate_messages_to_converse(sanitized: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Translate OpenAI-format messages to Bedrock Converse format."""
     system_blocks: list[dict[str, Any]] = []
@@ -58,6 +134,30 @@ def _translate_messages_to_converse(sanitized: list[dict[str, Any]]) -> tuple[li
             for part in content:
                 if not isinstance(part, dict):
                     continue
+                # Check for Converse-format blocks (text/toolUse/toolResult keys without "type")
+                if "text" in part:
+                    blocks.append({"text": str(part["text"])})
+                    continue
+                if "toolUse" in part:
+                    tu = part["toolUse"]
+                    blocks.append({
+                        "toolUse": {
+                            "toolUseId": tu.get("toolUseId", ""),
+                            "name": tu.get("name", ""),
+                            "input": tu.get("input", {}),
+                        }
+                    })
+                    continue
+                if "toolResult" in part:
+                    tr = part["toolResult"]
+                    blocks.append({
+                        "toolResult": {
+                            "toolUseId": tr.get("toolUseId", ""),
+                            "content": tr.get("content", [{"text": ""}]),
+                        }
+                    })
+                    continue
+                # OpenAI-format blocks have "type" key
                 ptype = part.get("type")
                 if ptype == "text":
                     blocks.append({"text": str(part.get("text", ""))})
