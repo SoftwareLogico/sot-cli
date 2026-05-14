@@ -7,6 +7,12 @@ from typing import Any
 
 import httpx
 
+import os
+# Windows SSL fix: httpx reads SSL_CERT_FILE from env and crashes if it does not exist
+_ssl_cert_file = os.environ.get("SSL_CERT_FILE")
+if _ssl_cert_file and not os.path.exists(_ssl_cert_file):
+    del os.environ["SSL_CERT_FILE"]
+
 from sot_cli.constants import COMPRESSED_TOOLS
 from sot_cli.message_builder import build_user_turn_message
 from sot_cli.providers.base import ProviderCapability, ProviderCompletion, ProviderEvent, ProviderRequest
