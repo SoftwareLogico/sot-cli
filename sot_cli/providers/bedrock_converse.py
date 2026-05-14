@@ -314,13 +314,25 @@ class BedrockConverseAdapter:
         return "reasoning_effort" in err_str or "reasoning_config" in err_str or "additionalModelRequestFields" in err_str
 
     async def stream_turn(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
-        kwargs = self._build_converse_kwargs(request, stream=True)
-
+        # Save the OpenAI-format payload for round-tripping (NOT Converse format)
         _write_session_json(
             "request",
-            {"url": f"bedrock:converse_stream ({self.region})", "payload": kwargs},
+            {
+                "url": f"bedrock:converse_stream ({self.region})",
+                "payload": {
+                    "model": self.model or request.model,
+                    "messages": request.conversation_messages,
+                    "temperature": request.temperature,
+                    "max_tokens": request.max_output_tokens,
+                    "stream": True,
+                },
+            },
             session_id=request.session_id,
         )
+
+        kwargs = self._build_converse_kwargs(request, stream=True)
+
+        # Save the raw Converse kwargs as payload.json for debugging
         _write_session_json("payload", kwargs, session_id=request.session_id)
 
         client = self._get_runtime_client()
@@ -411,13 +423,25 @@ class BedrockConverseAdapter:
         yield ProviderEvent(type="done")
 
     async def complete_turn(self, request: ProviderRequest) -> ProviderCompletion:
-        kwargs = self._build_converse_kwargs(request, stream=False)
-
+        # Save the OpenAI-format payload for round-tripping (NOT Converse format)
         _write_session_json(
             "request",
-            {"url": f"bedrock:converse ({self.region})", "payload": kwargs},
+            {
+                "url": f"bedrock:converse ({self.region})",
+                "payload": {
+                    "model": self.model or request.model,
+                    "messages": request.conversation_messages,
+                    "temperature": request.temperature,
+                    "max_tokens": request.max_output_tokens,
+                    "stream": False,
+                },
+            },
             session_id=request.session_id,
         )
+
+        kwargs = self._build_converse_kwargs(request, stream=False)
+
+        # Save the raw Converse kwargs as payload.json for debugging
         _write_session_json("payload", kwargs, session_id=request.session_id)
 
         client = self._get_runtime_client()

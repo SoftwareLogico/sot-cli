@@ -27,6 +27,24 @@ from pathlib import Path
 from typing import Any
 
 
+def _msg_char_count(msg: dict[str, Any]) -> int:
+    """Count characters in a message (handles both string and list content)."""
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        total = 0
+        for block in content:
+            if isinstance(block, dict):
+                for val in block.values():
+                    if isinstance(val, str):
+                        total += len(val)
+                    elif isinstance(val, dict):
+                        total += len(str(val))
+        return total
+    return len(str(content))
+
+
 def hyper_compress_session(session_dir: Path, dry_run: bool = False) -> dict[str, Any]:
     """Compress tool-heavy blocks in a session's request.json.
 
@@ -60,13 +78,13 @@ def hyper_compress_session(session_dir: Path, dry_run: bool = False) -> dict[str
         return {"error": "No messages in request.json payload"}
 
     # Calculate original size
-    chars_before = sum(len(str(m.get("content", ""))) for m in messages)
+    chars_before = sum(_msg_char_count(m) for m in messages)
     msg_before = len(messages)
 
     # Process blocks
     compressed_messages = _compress(messages)
 
-    chars_after = sum(len(str(m.get("content", ""))) for m in compressed_messages)
+    chars_after = sum(_msg_char_count(m) for m in compressed_messages)
     msg_after = len(compressed_messages)
 
     stats = {
@@ -132,6 +150,46 @@ def _format_tool_summary(pairs: list[tuple[str, str, str]]) -> str:
     return f"SYSTEM MESSAGE: Assistant requested tools this turn: {', '.join(parts)}. As stated in system instructions this is a summary of tool usage."
 
 
+def _get_content_text(msg: dict[str, Any]) -> str:
+    """Extract text content regardless of format (string or list of blocks)."""
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                texts.append(str(block.get("text", "")))
+        return "\n".join(texts)
+    return str(content)
+
+
+def _has_tool_calls(msg: dict[str, Any]) -> bool:
+    """Check if a message has tool calls (OpenAI format or Bedrock Converse format)."""
+    if msg.get("tool_calls"):
+        return True
+    content = msg.get("content", [])
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and "toolUse" in block:
+                return True
+    return False
+
+
+def _get_tool_names(msg: dict[str, Any]) -> list[str]:
+    """Extract tool names from a message (both formats)."""
+    names = []
+    for tc in (msg.get("tool_calls") or []):
+        func = tc.get("function", {})
+        names.append(str(func.get("name", "?")))
+    content = msg.get("content", [])
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and "toolUse" in block:
+                names.append(str(block["toolUse"].get("name", "?")))
+    return names
+
+
 def _compress(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collapse tool blocks in a message list.
 
@@ -174,11 +232,9 @@ def _compress(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             m = messages[j]
             role = m.get("role", "")
 
-            if role == "assistant" and m.get("tool_calls"):
+            if role == "assistant" and _has_tool_calls(m):
                 # Collect tool names
-                for tc in m["tool_calls"]:
-                    func = tc.get("function", {})
-                    name = str(func.get("name", "?"))
+                for name in _get_tool_names(m):
                     if name not in tool_names:
                         tool_names.append(name)
                 j += 1
@@ -187,16 +243,14 @@ def _compress(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if j < n and messages[j].get("role") == "tool":
                     resp_content = str(messages[j].get("content", ""))
                     status, err = _parse_tool_status(resp_content)
-                    for tc in m["tool_calls"]:
-                        func = tc.get("function", {})
-                        name = str(func.get("name", "?"))
+                    for name in _get_tool_names(m):
                         tool_pairs.append((name, status, err))
                     j += 1
                     continue
                 # No matching tool response → not a valid block
                 break
 
-            elif role == "assistant" and not m.get("tool_calls") and m.get("content") and str(m.get("content", "")).strip() not in ("", "None"):
+            elif role == "assistant" and not _has_tool_calls(m) and m.get("content") and str(m.get("content", "")).strip() not in ("", "None"):
                 # Final assistant text response — this ends the block
                 if tool_pairs:
                     # Collapse: keep user, insert SYSTEM MESSAGE, keep final text
@@ -274,9 +328,10 @@ def reload_chat_history_from_request(session_dir: Path) -> list[dict[str, Any]] 
         if role == "system":
             continue
         content = msg.get("content", "")
-        if role == "user" and _is_sot_block(str(content)):
+        content_text = _get_content_text(msg)
+        if role == "user" and _is_sot_block(content_text):
             continue
-        if role == "user" and isinstance(content, str) and content.startswith("=== CURRENT METADATA ==="):
+        if role == "user" and content_text.startswith("=== CURRENT METADATA ==="):
             continue
         chat.append(msg)
 
