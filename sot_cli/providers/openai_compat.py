@@ -484,6 +484,13 @@ def _sanitize_messages_for_provider(
                         # Stream cut before args delta arrived; provider
                         # rejects empty args. Drop.
                         continue
+                    try:
+                        json.loads(args)
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        # Malformed JSON — stream cut mid-arg or model error.
+                        # Drop so the provider never sees broken JSON and the
+                        # model can retry on the next turn.
+                        continue
                     if tc_id not in tool_response_ids:
                         # Orphan: no tool message in this batch will pair
                         # with us. Drop to preserve the strict invariant.

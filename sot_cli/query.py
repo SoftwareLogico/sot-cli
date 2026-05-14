@@ -29,6 +29,7 @@ from sot_cli.sot import (
     update_tracked_from_tool_result,
 )
 from sot_cli.tools.core import ToolExecutionResult
+from sot_cli.config.app import AppConfig
 from sot_cli.tools import ToolRegistry
 
 
@@ -36,6 +37,46 @@ from sot_cli.tools import ToolRegistry
 # terminal (Windows cmd, PowerShell, iTerm, Terminal.app, tmux, etc).
 #
 _REASONING_NEWLINE_RUN_RE = re.compile(r"\n{3,}")
+
+
+def _play_turn_done_sound(cfg: Any) -> None:
+    """Play the turn-done notification sound if the asset file exists.
+    Uses platform-native audio — no external dependencies."""
+    try:
+        from pathlib import Path
+        asset_path = Path(__file__).resolve().parent.parent / "assets" / "turn_done.wav"
+        if not asset_path.exists():
+            return
+        import sys
+        # macOS: afplay is built-in
+        if sys.platform == "darwin":
+            import subprocess
+            subprocess.run(
+                ["afplay", str(asset_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+            return
+        # Windows: winsound is Python stdlib
+        if sys.platform == "win32":
+            import winsound
+            winsound.PlaySound(str(asset_path), winsound.SND_FILENAME)
+            return
+        # Linux: try common audio players (all ship with the distro)
+        import subprocess
+        candidates = [
+            ["paplay", str(asset_path)],
+            ["aplay", str(asset_path)],
+        ]
+        for cmd in candidates:
+            try:
+                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                break
+            except FileNotFoundError:
+                continue
+    except Exception:
+        pass
 
 
 def _normalize_reasoning_whitespace(text: str) -> str:
@@ -499,6 +540,11 @@ async def run_tool_loop(
             conversation_state.chat_history.append(assistant_message)
             if completion.usage:
                 _merge_usage_totals(result.usage, completion.usage)
+            from sot_cli.config.app import AppConfig
+            _cfg: AppConfig = runtime.config
+            if not is_task and _cfg.tools.play_finished_notification:
+                _play_turn_done_sound(_cfg)
+
             return result
 
         # ── SoT Step 6: Clean — save assistant to permanent history (no SoT) ──
@@ -523,6 +569,11 @@ async def run_tool_loop(
                 )
             if completion.text and not round_request.stream:
                 console.print(completion.text)
+            from sot_cli.config.app import AppConfig
+            _cfg: AppConfig = runtime.config
+            if not is_task and _cfg.tools.play_finished_notification:
+                _play_turn_done_sound(_cfg)
+
             return result
 
         # ── Execute each tool call, rebuild SoT after EACH one ──
@@ -619,10 +670,20 @@ async def run_tool_loop(
                 result.is_error = True
                 result.text = message
                 result.tool_calls = []
+                from sot_cli.config.app import AppConfig
+                _cfg: AppConfig = runtime.config
+                if not is_task and _cfg.tools.play_finished_notification:
+                    _play_turn_done_sound(_cfg)
+
                 return result
             console.print(f"[bold yellow]Warning:[/bold yellow] {message}")
             result.text = message
             result.tool_calls = []
+            from sot_cli.config.app import AppConfig
+            _cfg: AppConfig = runtime.config
+            if not is_task and _cfg.tools.play_finished_notification:
+                _play_turn_done_sound(_cfg)
+
             return result
 
     message = _build_tool_loop_exhausted_message(effective_max_rounds, request.disable_delegation)
@@ -630,10 +691,31 @@ async def run_tool_loop(
         result.is_error = True
         result.text = message
         result.tool_calls = []
+        from sot_cli.config.app import AppConfig
+        _cfg: AppConfig = runtime.config
+        if not is_task and _cfg.tools.play_finished_notification:
+            _play_turn_done_sound(_cfg)
+
         return result
     console.print(f"[bold yellow]Warning:[/bold yellow] {message}")
     result.text = message
     result.tool_calls = []
+
+    # ── Play notification if configured ──
+    from sot_cli.config.app import AppConfig
+    _cfg: AppConfig = runtime.config
+    if not is_task and _cfg.tools.play_finished_notification:
+        _play_turn_done_sound(_cfg)
+
+    from sot_cli.config.app import AppConfig
+
+    _cfg: AppConfig = runtime.config
+
+    if not is_task and _cfg.tools.play_finished_notification:
+
+        _play_turn_done_sound(_cfg)
+
+
     return result
 
 

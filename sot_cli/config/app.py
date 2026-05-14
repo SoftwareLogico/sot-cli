@@ -58,6 +58,7 @@ class MCPServerConfig:
 
 @dataclass
 class ToolConfig:
+    play_finished_notification: bool = True
     default_command_timeout_seconds: int = 180
     binary_check_size: int = 0
     show_thinking: bool = True
@@ -264,6 +265,10 @@ def _parse_app_config(raw: dict[str, Any], keys_raw: dict[str, Any] | None = Non
             max_readable_file_tokens=_parse_non_negative_int(
                 tools_raw.get("max_readable_file_tokens", 64000),
                 "tools.max_readable_file_tokens",
+            ),
+            play_finished_notification=_parse_bool(
+                tools_raw.get("play_finished_notification", True),
+                "tools.play_finished_notification",
             ),
         ),
         mcp_servers=mcp_servers,
