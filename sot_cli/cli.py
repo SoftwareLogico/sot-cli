@@ -1887,6 +1887,15 @@ async def _run_prompt(
     loaded_history = _load_chat_history_from_request_jsons(session_dir)
     if loaded_history:
         _debug_log(session_dir, f"Loaded {len(loaded_history)} messages from request.json")
+        # Normalize Converse-format messages to OpenAI format for safe round-trip
+        try:
+            from sot_cli.providers.bedrock_converse import _normalize_converse_to_openai
+            normalized = _normalize_converse_to_openai(loaded_history)
+            if normalized is not None and len(normalized) > 0:
+                loaded_history = normalized
+                _debug_log(session_dir, f"Normalized {len(normalized)} messages (Converse -> OpenAI)")
+        except ImportError:
+            pass
         session_state.chat_history = loaded_history
         _replay_conversation(loaded_history, session_dir)
         _debug_log(session_dir, "Replay completed")
