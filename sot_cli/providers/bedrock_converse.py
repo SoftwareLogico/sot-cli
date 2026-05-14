@@ -22,6 +22,16 @@ def _clean_name(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]", "_", name)[:200]
 
 
+def _safe_json_loads(raw: str, default: Any = None) -> Any:
+    """Parse JSON safely, returning `default` on any failure."""
+    if not isinstance(raw, str) or not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return default
+
+
 def _normalize_converse_to_openai(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert Converse-format messages to OpenAI format for safe round-trip."""
     import json, base64
@@ -203,7 +213,7 @@ def _translate_messages_to_converse(sanitized: list[dict[str, Any]]) -> tuple[li
                     "toolUse": {
                         "toolUseId": tc.get("id", ""),
                         "name": func.get("name", ""),
-                        "input": json.loads(args_raw) if args_raw else {},
+                        "input": _safe_json_loads(args_raw, {}),
                     }
                 })
 

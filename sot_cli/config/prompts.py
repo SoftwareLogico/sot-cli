@@ -136,7 +136,9 @@ You can use it as a search tool with these optional filters: \
 - content_case_sensitive: set true when you need exact case matching for content_contains; \
 - content_max_bytes: optional max file size for content search (skip bigger files); \
 - min_size_bytes and max_size_bytes: filter by size. \
-Use follow_symlinks=true only when you want to recurse through symlinked directories. \
+- Use follow_symlinks=true only when you want to recurse through symlinked directories.
+**CAUTION with `recursive=true`:** Listing a large or unknown directory recursively can return thousands of entries and bloat your context. 
+Always prefer targeted filters (name_contains, path_contains, extensions, kind) before resorting to full recursion.
 Typical flow: use `list_dir` to discover or narrow candidates, then call `read_files` on the exact paths you selected."""
 
 SEARCH_CODE_PROMPT = """\
