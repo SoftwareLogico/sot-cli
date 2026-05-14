@@ -644,8 +644,16 @@ class OpenAICompatibleAdapter:
                 if resp.status_code != 200:
                     raise RuntimeError(f"Failed to fetch models from OpenRouter (HTTP {resp.status_code}).")
                 models = resp.json().get("data",[])
-        except httpx.RequestError as exc:
-            raise RuntimeError(f"Could not connect to OpenRouter at {self.base_url}. Check your internet connection.") from exc
+        except Exception as exc:
+            err_msg = str(exc)
+            if "SSL_CERT_FILE" in err_msg or "No such file" in err_msg:
+                import sys
+                sys.stderr.write(f"[Warning] SSL certificate issue (check SSL_CERT_FILE env var): {exc}\n")
+                sys.stderr.flush()
+                self.capability = ProviderCapability(supports_tools=True)
+                self._capabilities_detected = True
+                return
+            raise RuntimeError(f"Could not connect to OpenRouter at {self.base_url}: {exc}") from exc
 
         model_info = None
         for m in models:
