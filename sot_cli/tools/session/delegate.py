@@ -137,9 +137,11 @@ def execute_delegate_task(arguments: dict[str, Any], runtime: AppRuntime, parent
     # 4. Preparar comando y entorno
     env = os.environ.copy()
     env["SOT_SESSIONS_DIR"] = str(agents_dir)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
 
     command = [
-        sys.executable, "-m", "sot_cli",
+        sys.executable, "-X", "utf8", "-m", "sot_cli",
         "--config", str(runtime.paths.config_file),
         "--run_task", agent_id, wrapped_task_prompt,
     ]
@@ -150,6 +152,7 @@ def execute_delegate_task(arguments: dict[str, Any], runtime: AppRuntime, parent
         "cwd": str(runtime.paths.root_dir),
         "env": env,
         "stderr": subprocess.STDOUT,
+        "stdout": subprocess.PIPE,
     }
 
     if os.name == "nt":
@@ -157,13 +160,31 @@ def execute_delegate_task(arguments: dict[str, Any], runtime: AppRuntime, parent
     else:
         popen_kwargs["start_new_session"] = True
 
-    # Uso de with open para garantizar cierre del descriptor incluso si Popen/run lanza
-    with open(new_agent_dir / "agent.log", "w") as log_file:
-        popen_kwargs["stdout"] = log_file
-        if background:
-            subprocess.Popen(command, **popen_kwargs)
-            return {"status": "started", "agent_id": agent_id}
+    if background:
+        proc = subprocess.Popen(command, **popen_kwargs)
+        # Drain stdout in a daemon thread so the pipe never blocks
+        import threading
+        log_path = new_agent_dir / "agent.log"
 
-        subprocess.run(command, **popen_kwargs)
+        def _drain(p: subprocess.Popen, path: Path) -> None:  # type: ignore[type-arg]
+            try:
+                with open(path, "wb") as lf:
+                    assert p.stdout is not None
+                    for chunk in iter(lambda: p.stdout.read(4096), b""):
+                        lf.write(chunk)
+            except Exception:
+                pass
+
+        threading.Thread(target=_drain, args=(proc, log_path), daemon=True).start()
+        return {"status": "started", "agent_id": agent_id}
+
+    # Foreground: run to completion, stream output to log
+    log_path = new_agent_dir / "agent.log"
+    proc = subprocess.Popen(command, **popen_kwargs)
+    assert proc.stdout is not None
+    with open(log_path, "wb") as lf:
+        for chunk in iter(lambda: proc.stdout.read(4096), b""):
+            lf.write(chunk)
+    proc.wait()
 
     return {"status": "completed", "agent_id": agent_id}
