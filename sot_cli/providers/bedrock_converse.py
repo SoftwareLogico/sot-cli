@@ -300,13 +300,15 @@ class BedrockConverseAdapter:
         def _fetch() -> dict[str, Any]:
             try:
                 import boto3
+                from botocore.config import Config as BotocoreConfig
             except ImportError:
                 raise RuntimeError("boto3 is required for Amazon Bedrock. Run 'pip install boto3'")
 
             if self.api_key:
                 os.environ["AWS_BEARER_TOKEN_BEDROCK"] = self.api_key
 
-            client = boto3.client("bedrock", region_name=self.region)
+            _cfg = BotocoreConfig(read_timeout=600, connect_timeout=300)
+            client = boto3.client("bedrock", region_name=self.region, config=_cfg)
             return client.get_foundation_model(modelIdentifier=self.model)
 
         try:
@@ -333,13 +335,19 @@ class BedrockConverseAdapter:
     def _get_runtime_client(self):
         try:
             import boto3
+            from botocore.config import Config as BotocoreConfig
         except ImportError:
             raise RuntimeError("boto3 is required for Amazon Bedrock. Run 'pip install boto3'")
 
         if self.api_key:
             os.environ["AWS_BEARER_TOKEN_BEDROCK"] = self.api_key
 
-        return boto3.client("bedrock-runtime", region_name=self.region)
+        _cfg = BotocoreConfig(
+            read_timeout=600,
+            connect_timeout=60,
+            retries={"max_attempts": 1},
+        )
+        return boto3.client("bedrock-runtime", region_name=self.region, config=_cfg)
 
     def _build_converse_kwargs(self, request: ProviderRequest, stream: bool = True) -> dict[str, Any]:
         sanitized = _sanitize_messages_for_provider(
