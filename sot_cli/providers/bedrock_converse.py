@@ -283,12 +283,14 @@ class BedrockConverseAdapter:
         region: str,
         api_key: str | None,
         extra_headers: dict[str, str] | None = None,
+        thinking_type: str | None = None,
     ) -> None:
         self.name = name
         self.model = model
         self.region = region
         self.api_key = api_key
         self.extra_headers = extra_headers or {}
+        self.thinking_type = thinking_type  # "adaptive" | "enabled" | None (auto-detect)
         self.capability = ProviderCapability()
         self._capabilities_detected = False
 
@@ -376,21 +378,37 @@ class BedrockConverseAdapter:
         # - Kimi/GLM: reasoning_config high
         if request.reasoning_effort:
             model_lower = (self.model or request.model).lower()
-            if "claude" in model_lower:
+            # Resolve thinking_type: explicit config > model-name inference
+            thinking_type = self.thinking_type
+            if not thinking_type:
+                if "fable" in model_lower or "opus" in model_lower or "claude-3-7" in model_lower:
+                    thinking_type = "adaptive"
+                elif "claude" in model_lower:
+                    thinking_type = "enabled"
+                # kimi/glm/zai handled separately below
+            if "kimi" in model_lower or "glm" in model_lower or "zai" in model_lower:
+                kwargs["additionalModelRequestFields"] = {
+                    "reasoning_config": "high"
+                }
+            elif thinking_type == "adaptive":
+                # adaptive = Fable 5, claude-opus-4, claude-3-7+ — uses output_config.effort
+                effort_level = "high" if request.reasoning_effort in ("high", "max", "xhigh") else "medium"
+                kwargs["additionalModelRequestFields"] = {
+                    "thinking": {"type": "adaptive"},
+                    "output_config": {"effort": effort_level},
+                }
+                kwargs["inferenceConfig"]["temperature"] = 1.0
+            elif thinking_type == "enabled":
+                # enabled = older claude models — uses budget_tokens
                 kwargs["additionalModelRequestFields"] = {
                     "thinking": {
                         "type": "enabled",
                         "budget_tokens": max(1024, min(request.max_output_tokens, 32000)),
                     }
                 }
-                # Claude requires temperature=1.0 when thinking is enabled
                 kwargs["inferenceConfig"]["temperature"] = 1.0
-            elif "kimi" in model_lower or "glm" in model_lower or "zai" in model_lower:
-                kwargs["additionalModelRequestFields"] = {
-                    "reasoning_config": "high"
-                }
             else:
-                # Default: try thinking format (works for most)
+                # Default fallback: try enabled format
                 kwargs["additionalModelRequestFields"] = {
                     "thinking": {
                         "type": "enabled",
