@@ -22,12 +22,14 @@ def create_provider_adapter(config: AppConfig, provider_name: ProviderName, mode
 
     if provider_name == "bedrock":
         region = str(provider.extra.get("region", "us-east-1")).strip()
+        thinking_type = str(provider.extra.get("thinking_type", "")).strip() or None
         return BedrockConverseAdapter(
             name=provider_name,
             model=effective_model,
             region=region,
             api_key=provider.api_key,
             extra_headers=extra_headers,
+            thinking_type=thinking_type,
         )
 
     return OpenAICompatibleAdapter(

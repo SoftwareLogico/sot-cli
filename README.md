@@ -197,9 +197,13 @@ max_output_tokens = 32768
 [providers.bedrock]
 # base_url is auto-resolved from region to https://bedrock-mantle.{region}.api.aws/v1
 region = "us-east-1"
-model = "qwen.qwen3-235b-a22b-2507"
-temperature = 0.7
-max_output_tokens = 8192
+model = "us.anthropic.claude-fable-5"
+temperature = 1.0
+max_output_tokens = 32768
+reasoning_effort = "high"
+# thinking_type: "adaptive" for Fable 5 / Opus 4 / Claude 3.7+, "enabled" for older Claude
+# Omit to auto-detect from model name.
+thinking_type = "adaptive"
 ```
 
 For full per-provider field semantics (including OpenAI-specific quirks like `max_completion_tokens` and tool schema sanitization), see [ARCHITECTURE.md → Provider configuration](ARCHITECTURE.md#provider-configuration-providersx).

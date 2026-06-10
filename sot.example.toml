@@ -169,6 +169,11 @@ subagent_model = "moonshotai.kimi-k2.5"
 temperature = 0.7
 max_output_tokens = 32768
 reasoning_effort = "high"
+# thinking_type controls how extended reasoning is sent to the model.
+# "adaptive"  — Fable 5, Claude Opus 4, Claude 3.7+ (uses output_config.effort)
+# "enabled"   — Older Claude models like Sonnet/Haiku (uses budget_tokens)
+# Omit this field to let the runtime infer from the model name automatically.
+thinking_type = "adaptive"
 
 
 # ── Ollama (local) ─────────────────────────────────────────────────────
