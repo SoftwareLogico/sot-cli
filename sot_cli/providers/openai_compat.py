@@ -1008,6 +1008,91 @@ def _is_openai_reasoning_model(model: str) -> bool:
     return False
 
 
+
+# ── NVIDIA NIM model-family → chat_template_kwargs mapping ──────────────
+# NVIDIA NIM hosts many model families on the same endpoint. Each uses
+# a DIFFERENT key inside `chat_template_kwargs` for thinking/reasoning.
+# Mapping extracted from official build.nvidia.com playground templates.
+#
+# Supported families:
+#   nvidia/nemotron*    → enable_thinking, medium_effort, reasoning_budget
+#   minimaxai/*         → thinking_mode
+#   deepseek-ai/*       → thinking, reasoning_effort (high/max)
+#   z-ai/glm*           → enable_thinking, clear_thinking
+#   moonshotai/kimi*    → thinking
+#   mistralai/*         → top-level reasoning_effort (no kwargs)
+#   openai/gpt-oss*     → top-level reasoning_effort (no kwargs)
+#
+# Unknown models default to enable_thinking (most common convention).
+
+
+def _build_nvidia_thinking_kwargs(
+    model: str, reasoning_effort: str | None
+) -> dict[str, Any] | None:
+    """Return chat_template_kwargs dict for NVIDIA NIM thinking.
+
+    Returns None when reasoning_effort is empty. For Mistral/GPT-OSS
+    families, uses a sentinel key `_top_level_reasoning_effort` that
+    the caller must pop and inject as a top-level payload field.
+    """
+    if not reasoning_effort:
+        return None
+
+    m = model.lower().strip()
+    effort = reasoning_effort.lower()
+
+    # NVIDIA Nemotron family
+    if "nemotron" in m:
+        if effort == "none":
+            return {"enable_thinking": False}
+        kwargs: dict[str, Any] = {"enable_thinking": True}
+        if effort == "medium":
+            kwargs["medium_effort"] = True
+        return kwargs
+
+    # MiniMax family
+    if "minimax" in m:
+        if effort == "none":
+            return {"thinking_mode": "disabled"}
+        return {"thinking_mode": "enabled"}
+
+    # DeepSeek family
+    if "deepseek" in m:
+        if effort == "none":
+            return {"thinking": False}
+        if effort in ("max", "xhigh"):
+            return {"thinking": True, "reasoning_effort": "max"}
+        return {"thinking": True, "reasoning_effort": "high"}
+
+    # GLM / Z.ai family
+    if "glm" in m:
+        if effort == "none":
+            return {"enable_thinking": False, "clear_thinking": True}
+        return {"enable_thinking": True, "clear_thinking": False}
+
+    # Kimi / Moonshot family
+    if "kimi" in m:
+        if effort == "none":
+            return {"thinking": False}
+        return {"thinking": True}
+
+    # Mistral family — top-level reasoning_effort, no kwargs
+    if "mistral" in m:
+        return {"_top_level_reasoning_effort": effort if effort != "none" else "none"}
+
+    # OpenAI GPT-OSS family — top-level reasoning_effort
+    if "gpt-oss" in m:
+        return {"_top_level_reasoning_effort": effort if effort != "none" else "none"}
+
+    # Unknown NVIDIA model — safe default
+    if effort == "none":
+        return {"enable_thinking": False}
+    kwargs = {"enable_thinking": True}
+    if effort == "medium":
+        kwargs["medium_effort"] = True
+    return kwargs
+
+
 def build_chat_completions_payload(request: ProviderRequest, resolved_model: str) -> dict[str, Any]:
     raw_messages = request.conversation_messages or [
         {"role": "system", "content": request.system_prompt},
@@ -1098,11 +1183,22 @@ def build_chat_completions_payload(request: ProviderRequest, resolved_model: str
     if (is_openrouter or request.provider_name == "bedrock") and request.reasoning_effort:
         payload["reasoning"] = {"effort": request.reasoning_effort}
 
+    # ── NVIDIA NIM reasoning / thinking support ───────────────────────
+    # NVIDIA hosts many model families on the same API endpoint. Each
+    # family uses different keys inside chat_template_kwargs to enable
+    # reasoning. The mapping is model-name-based.
+    if request.provider_name == "nvidia" and request.reasoning_effort:
+        thinking_kwargs = _build_nvidia_thinking_kwargs(resolved_model, request.reasoning_effort)
+        if thinking_kwargs is not None:
+            top_level_effort = thinking_kwargs.pop("_top_level_reasoning_effort", None)
+            if top_level_effort:
+                payload["reasoning_effort"] = top_level_effort
+            elif thinking_kwargs:
+                payload["chat_template_kwargs"] = thinking_kwargs
 
     # Reasoning effort wire format diverges per provider — and OpenAI in
     # particular rejects unknown top-level keys with HTTP 400, so we MUST NOT
-    # forward this field to anyone but the two providers that document it,
-    # AND only on models that actually accept it.
+    # forward this field to anyone but the providers that document it.
     #
     return payload
 
