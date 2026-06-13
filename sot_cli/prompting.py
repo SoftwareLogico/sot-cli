@@ -38,7 +38,7 @@ def prepare_turn_request(
     )
 
 
-    # Reasoning effort from sot.toml (OpenRouter only uses nested format)
+    # Reasoning effort from sot.toml (OpenRouter, Bedrock, and NVIDIA use this)
     raw_effort = provider.extra.get("reasoning_effort")
     reasoning_effort: str | None = (
         str(raw_effort).strip() or None if raw_effort is not None else None

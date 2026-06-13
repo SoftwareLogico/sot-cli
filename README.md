@@ -193,6 +193,7 @@ base_url = "https://integrate.api.nvidia.com/v1"
 model = "qwen/qwen3-coder-480b-a35b-instruct"
 temperature = 0.7
 max_output_tokens = 32768
+reasoning_effort = "high"  # "none"|"medium"|"high"|"xhigh" — maps to chat_template_kwargs per model family
 
 [providers.bedrock]
 # base_url is auto-resolved from region to https://bedrock-mantle.{region}.api.aws/v1
