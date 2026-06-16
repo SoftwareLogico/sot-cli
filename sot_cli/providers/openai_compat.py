@@ -387,10 +387,17 @@ def _sanitize_messages_for_provider(
             tool_response_ids.add(tc_id)
             tool_response_by_id.setdefault(tc_id, entry)
 
+    # Track tool_call_ids that were successfully paired with a tool response
+    # during the emit pass. Used to preserve assistant messages whose
+    # tool_calls were all consumed by pairing — without this, a tool-call-only
+    # assistant (content=null) would be dropped even though its companion
+    # tool response survived, breaking the model's context on session resume.
+    paired_tool_call_ids: set[str] = set()
+    consumed_tool_call_ids: set[str] = set()
+
     # ── Pass 3: emit messages, applying schema firewall + compression ──
     sanitized: list[dict[str, Any]] = []
     pending_tool_call_ids: set[str] = set()
-    consumed_tool_call_ids: set[str] = set()
     # Pre-computed for each closed-turn assistant: the tool_call IDs we
     # are going to compress away. Their matching ``tool`` messages will
     # be dropped from the emit pass and replaced by a SYSTEM MESSAGE.
@@ -511,6 +518,7 @@ def _sanitize_messages_for_provider(
                         continue
                     surviving_calls.append(tc)
                     pending_tool_call_ids.add(tc_id)
+                    paired_tool_call_ids.add(tc_id)
 
                 if surviving_calls:
                     msg["tool_calls"] = surviving_calls
@@ -519,7 +527,19 @@ def _sanitize_messages_for_provider(
 
             content_is_empty = _is_effectively_empty_text(msg.get("content"))
             has_surviving_tool_calls = bool(msg.get("tool_calls"))
-            if content_is_empty and not has_surviving_tool_calls:
+            # Check if this assistant originally had tool_calls that were
+            # successfully paired (consumed by a matching tool response).
+            # This preserves tool-call-only assistants (content=null) whose
+            # calls were all consumed during pairing — without this check,
+            # the assistant message would be dropped even though its companion
+            # tool response survived in the payload.
+            original_had_paired_calls = False
+            if not has_surviving_tool_calls and isinstance(original.get("tool_calls"), list):
+                for tc in original["tool_calls"]:
+                    if isinstance(tc, dict) and tc.get("id") in consumed_tool_call_ids:
+                        original_had_paired_calls = True
+                        break
+            if content_is_empty and not has_surviving_tool_calls and not original_had_paired_calls:
                 continue
 
             sanitized.append(msg)

@@ -545,6 +545,7 @@ async def run_tool_loop(
             if not is_task and _cfg.tools.play_finished_notification:
                 _play_turn_done_sound(_cfg)
 
+            _save_final_request_payload(request, conversation_state)
             return result
 
         # ── SoT Step 6: Clean — save assistant to permanent history (no SoT) ──
@@ -574,6 +575,7 @@ async def run_tool_loop(
             if not is_task and _cfg.tools.play_finished_notification:
                 _play_turn_done_sound(_cfg)
 
+            _save_final_request_payload(request, conversation_state)
             return result
 
         # ── Execute each tool call, rebuild SoT after EACH one ──
@@ -684,6 +686,7 @@ async def run_tool_loop(
             if not is_task and _cfg.tools.play_finished_notification:
                 _play_turn_done_sound(_cfg)
 
+            _save_final_request_payload(request, conversation_state)
             return result
 
     message = _build_tool_loop_exhausted_message(effective_max_rounds, request.disable_delegation)
@@ -951,32 +954,77 @@ def _build_payload_messages(conversation_state: ConversationState, request: Prov
     if request.orchestration_rules:
         payload.append({"role": "user", "content": request.orchestration_rules})
 
-    # Encontrar el índice del último prompt del usuario para inyectar el SoT justo antes
+    # 1. Encontrar el índice del último prompt del usuario activo
     last_user_idx = 0
     for i in range(len(conversation_state.chat_history) - 1, -1, -1):
-        if conversation_state.chat_history[i].get("role") == "user":
+        msg = conversation_state.chat_history[i]
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            # Ignoramos los SYSTEM MESSAGES de la compresión para encontrar el prompt real
+            if isinstance(content, str) and content.startswith("SYSTEM MESSAGE:"):
+                continue
             last_user_idx = i
             break
 
-    # 1. Historial pasado (todo hasta el último user prompt, exclusivo)
-    payload.extend(conversation_state.chat_history[:last_user_idx])
+    # 2. Determinar el punto de inyección del SoT
+    # Retrocedemos SOLO sobre mensajes de texto puro del asistente (sin tool_calls).
+    # NO retrocedemos sobre llamadas a herramientas ni resultados:
+    # el SoT refleja el estado DESPUÉS de esas herramientas, así que debe ir
+    # DESPUÉS de ellas en la secuencia para preservar la causalidad temporal.
+    injection_idx = last_user_idx
+    if last_user_idx > 0:
+        idx = last_user_idx - 1
+        while idx >= 0:
+            prev_msg = conversation_state.chat_history[idx]
+            # Solo saltamos si es un mensaje de texto puro del asistente (sin herramientas)
+            if prev_msg.get("role") == "assistant" and not prev_msg.get("tool_calls"):
+                injection_idx = idx
+                idx -= 1
+            else:
+                break
 
-    # 2. El SoT (Estado actual del mundo)
+    # 3. Historial pasado (antes del punto de inyección)
+    payload.extend(conversation_state.chat_history[:injection_idx])
+
+    # 4. El SoT (Estado actual del mundo)
     sot_message = build_sot_payload_message(conversation_state.sot)
     if sot_message is not None:
         payload.append(sot_message)
 
-    # 2.5 CURRENT METADATA block — metadata del turno previo (vacía en el primer turno,
-    #     en cuyo caso se omite). Efímero, no entra a chat_history.
+    # 5. CURRENT METADATA block (Estadísticas del turno previo)
     if conversation_state.last_turn_metadata:
         meta_message = build_previous_turn_metadata_message(conversation_state.last_turn_metadata)
         if meta_message is not None:
             payload.append(meta_message)
 
-    # 3. El turno actual (último user prompt y lo que venga despues)
-    payload.extend(conversation_state.chat_history[last_user_idx:])
+    # 6. El resto del historial (Respuesta completa de la IA anterior + turno actual del usuario)
+    payload.extend(conversation_state.chat_history[injection_idx:])
 
     return payload
+
+
+
+def _save_final_request_payload(request: ProviderRequest, conversation_state: ConversationState) -> None:
+    """Persist the complete chat_history (including the final assistant message) to request.json.
+
+    Called at every exit point of run_tool_loop so the last assistant message
+    is never lost on session close. The saved payload is what
+    _load_chat_history_from_request_jsons reads on session resume.
+    """
+    from sot_cli.providers.openai_compat import _write_session_json
+
+    payload_messages = _build_payload_messages(conversation_state, request)
+    payload_messages.insert(0, {"role": "system", "content": request.system_prompt})
+
+    _write_session_json(
+        "request",
+        {"url": f"provider:{request.provider_name}", "payload": {
+            "model": request.model,
+            "messages": payload_messages,
+            "stream": request.stream,
+        }},
+        session_id=request.session_id,
+    )
 
 
 def _build_tool_result_summary(tool_result: Any) -> str:
