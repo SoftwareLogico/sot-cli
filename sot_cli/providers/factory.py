@@ -12,10 +12,13 @@ def create_provider_adapter(config: AppConfig, provider_name: ProviderName, mode
     if provider_name == "openrouter":
         http_referer = str(provider.extra.get("http_referer", "")).strip()
         app_title = str(provider.extra.get("app_title", "")).strip()
+        categories = str(provider.extra.get("categories", "")).strip()
         if http_referer:
             extra_headers["HTTP-Referer"] = http_referer
         if app_title:
             extra_headers["X-OpenRouter-Title"] = app_title
+        if categories:
+            extra_headers["X-OpenRouter-Categories"] = categories
         provider_selection = str(provider.extra.get("provider_selection", "")).strip() or None
     else:
         provider_selection = None

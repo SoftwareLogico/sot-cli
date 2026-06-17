@@ -142,8 +142,8 @@ subagent_model = ""                  # optional model for delegated sub-agents (
 temperature = 0.7
 max_output_tokens = 32768
 http_referer = "https://github.com/SoftwareLogico/sot-cli"     # for rankings
-app_title = "sot-cli" 
-                                          # for rankings
+app_title = "sot-cli"                                          # for rankings
+categories = "coding,developer-tools"                          # OpenRouter attribution (up to 2, lowercase, hyphen-separated)
 # reasoning effort hint ("none"|"low"|"medium"|"high"|"xhigh")
 # OpenRouter nested format: {"reasoning": {"effort": "..."}}
 reasoning_effort = "medium"
