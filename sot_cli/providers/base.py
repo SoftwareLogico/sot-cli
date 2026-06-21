@@ -10,7 +10,7 @@ ProviderEventType = Literal["text_delta", "reasoning_delta", "tool_call", "usage
 @dataclass
 class ProviderCapability:
     supports_tools: bool = False
-    supports_images: bool = False
+    supports_images: bool = True
     supports_pdfs: bool = False
     supports_audio: bool = False
     supports_video: bool = False
