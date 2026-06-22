@@ -317,11 +317,9 @@ class BedrockConverseAdapter:
             response = await asyncio.to_thread(_fetch)
             details = response.get("modelDetails", {})
             input_mods: list[str] = details.get("inputModalities", []) or []
-            supports_images = "IMAGE" in input_mods
             self.capability = ProviderCapability(
                 supports_tools=True,
-                supports_images=supports_images,
-                supports_pdfs=supports_images,
+                supports_pdfs=True,
                 context_length=_infer_context_length(self.model),
             )
         except Exception:

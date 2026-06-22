@@ -765,7 +765,6 @@ class OpenAICompatibleAdapter:
 
         self.capability = ProviderCapability(
             supports_tools=bool(caps.get("trained_for_tool_use", False)),
-            supports_images=bool(caps.get("vision", False)),
             supports_pdfs=False,
             supports_audio=False,
             supports_video=False,
@@ -825,7 +824,6 @@ class OpenAICompatibleAdapter:
 
         self.capability = ProviderCapability(
             supports_tools="tools" in capabilities,
-            supports_images="vision" in capabilities,
             supports_pdfs=False,
             supports_audio=False,
             supports_video=False,
@@ -857,7 +855,6 @@ class OpenAICompatibleAdapter:
         # Asumimos capacidades estándar OpenAI-compatible para proveedores de API.
         self.capability = ProviderCapability(
             supports_tools=True,
-            supports_images=False,
             supports_pdfs=False,
             supports_audio=False,
             supports_video=False,
