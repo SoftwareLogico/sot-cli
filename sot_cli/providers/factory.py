@@ -22,7 +22,9 @@ def create_provider_adapter(config: AppConfig, provider_name: ProviderName, mode
     else:
         provider_selection = None
 
-    if provider_name == "bedrock":
+    # SOLO usar BedrockConverseAdapter (boto3) si NO se ha especificado un base_url personalizado.
+    # Si hay un base_url, significa que es Bedrock Mantle (OpenAI compatible) y debe usar OpenAICompatibleAdapter.
+    if provider_name == "bedrock" and not provider.base_url:
         region = str(provider.extra.get("region", "us-east-1")).strip()
         thinking_type = str(provider.extra.get("thinking_type", "")).strip() or None
         return BedrockConverseAdapter(
@@ -34,7 +36,6 @@ def create_provider_adapter(config: AppConfig, provider_name: ProviderName, mode
             thinking_type=thinking_type,
         )
 
-    # ESTO DEBE ESTAR ALINEADO FUERA DEL IF DE BEDROCK
     return OpenAICompatibleAdapter(
         name=provider_name,
         base_url=provider.base_url,
