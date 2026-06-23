@@ -1,5 +1,4 @@
 from __future__ import annotations
-import os
 from sot_cli.config import AppConfig, ProviderName
 from sot_cli.providers.base import ProviderAdapter
 from sot_cli.providers.openai_compat import OpenAICompatibleAdapter
@@ -24,27 +23,6 @@ def create_provider_adapter(config: AppConfig, provider_name: ProviderName, mode
         provider_selection = None
 
     if provider_name == "bedrock":
-        base_url = getattr(provider, "base_url", None)
-        if base_url:
-            
-            project_id = getattr(provider, "project_id", None)
-            if not project_id and hasattr(provider, "extra") and isinstance(provider.extra, dict):
-                project_id = provider.extra.get("project_id")
-            
-            project_id = str(project_id or "default").strip()
-            
-            extra_headers["OpenAI-Project"] = project_id
-            
-            return OpenAICompatibleAdapter(
-                name=provider_name,
-                base_url=base_url,
-                api_key=provider.api_key,
-                model=effective_model,
-                extra_headers=extra_headers,
-                provider_selection=provider_selection,
-            )
-
-        # De lo contrario, cae en el comportamiento por defecto de Boto3 / Converse API
         region = str(provider.extra.get("region", "us-east-1")).strip()
         thinking_type = str(provider.extra.get("thinking_type", "")).strip() or None
         return BedrockConverseAdapter(
@@ -55,6 +33,16 @@ def create_provider_adapter(config: AppConfig, provider_name: ProviderName, mode
             extra_headers=extra_headers,
             thinking_type=thinking_type,
         )
+
+    # ESTO DEBE ESTAR ALINEADO FUERA DEL IF DE BEDROCK
+    return OpenAICompatibleAdapter(
+        name=provider_name,
+        base_url=provider.base_url,
+        api_key=provider.api_key,
+        model=effective_model,
+        extra_headers=extra_headers,
+        provider_selection=provider_selection,
+    )
 
 
 async def create_provider_adapter_with_detection(config: AppConfig, provider_name: ProviderName, model: str | None = None) -> OpenAICompatibleAdapter:
