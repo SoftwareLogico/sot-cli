@@ -879,7 +879,7 @@ class OpenAICompatibleAdapter:
                 supports_tools=True,
                 supports_images=True,
                 supports_pdfs=True,
-                context_length=256_000,
+                context_length=1_000_000,
             )
             return
 
@@ -887,7 +887,7 @@ class OpenAICompatibleAdapter:
             supports_tools=True,
             supports_images=True,
             supports_pdfs=True,
-            context_length=256_000,
+            context_length=1_000_000,
         )
 
 
@@ -1139,6 +1139,7 @@ def build_chat_completions_payload(request: ProviderRequest, resolved_model: str
 
     is_openai = request.provider_name == "openai"
     is_openrouter = request.provider_name == "openrouter"
+    is_bedrock = request.provider_name == "bedrock"
     # Only flips the wire-level treatment of OpenAI Chat Completions params.
     # Not applied to openrouter even when routing an OpenAI reasoning model
     # through it, because OpenRouter normalizes/strips unsupported params on
@@ -1152,14 +1153,8 @@ def build_chat_completions_payload(request: ProviderRequest, resolved_model: str
         "stream": request.stream,
     }
 
-    # Output token cap field — OpenAI deprecated `max_tokens` chat-completions-
-    # wide and reasoning-class models reject it with HTTP 400
-    # `unsupported_parameter`. Use `max_completion_tokens` for openai
-    # unconditionally (non-reasoning openai models still accept the new name)
-    # and keep `max_tokens` for everyone else, since most OpenAI-compatible
-    # servers in the wild (vLLM, llama.cpp server, Ollama, LM Studio, NVIDIA
-    # NIM) only know the legacy field name.
-    if is_openai:
+    # Usar max_completion_tokens para OpenAI, y también para Bedrock si el razonamiento está activo
+    if is_openai or (is_bedrock and request.reasoning_effort):
         payload["max_completion_tokens"] = request.max_output_tokens
     else:
         payload["max_tokens"] = request.max_output_tokens
@@ -1197,8 +1192,20 @@ def build_chat_completions_payload(request: ProviderRequest, resolved_model: str
     # OpenRouter / Bedrock reasoning effort — nested object format
     # OpenRouter docs: https://openrouter.ai/docs/features/reasoning
     # Bedrock Mantle is OpenAI-compatible and accepts the same format.
-    if (is_openrouter or request.provider_name == "bedrock") and request.reasoning_effort:
+    # OpenRouter reasoning effort
+    if is_openrouter and request.reasoning_effort:
         payload["reasoning"] = {"effort": request.reasoning_effort}
+
+    # Bedrock Mantle reasoning effort
+    if request.provider_name == "bedrock" and request.reasoning_effort:
+        effort = request.reasoning_effort.lower()
+        if effort == "xhigh":
+            effort = "high"
+        elif effort == "none":
+            effort = "minimal"
+        
+        if effort in ("minimal", "low", "medium", "high"):
+            payload["reasoning_effort"] = effort
 
     # ── NVIDIA NIM reasoning / thinking support ───────────────────────
     # NVIDIA hosts many model families on the same API endpoint. Each
@@ -1259,6 +1266,14 @@ def _sanitize_tool_schema_for_openai(tool: dict[str, Any]) -> dict[str, Any]:
 def _events_from_chunk(chunk: dict[str, Any]) -> list[ProviderEvent]:
     events: list[ProviderEvent] = []
 
+    # 1. Comprobamos si el chunk reporta un error de generación del proveedor a mitad de stream
+    err = chunk.get("error")
+    if isinstance(err, dict):
+        err_msg = err.get("message") or err.get("type") or "Unknown streaming error"
+        events.append(ProviderEvent(type="error", payload={"message": f"Mantle Stream Error: {err_msg}"}))
+        return events
+
+    # 2. Procesamiento estándar si no hay errores
     usage = chunk.get("usage")
     if usage:
         events.append(ProviderEvent(type="usage", payload={"usage": usage}))
@@ -1284,13 +1299,7 @@ def _events_from_chunk(chunk: dict[str, Any]) -> list[ProviderEvent]:
         if tool_calls:
             events.append(ProviderEvent(type="tool_call", payload={"tool_calls": tool_calls}))
 
-        # Detect abrupt stream termination: finish_reason == "length" means the
-        # model hit its max_output_tokens limit mid-response. Emit a "finished"
-        # event so the stream handlers can warn the user and abort cleanly
-        # instead of letting the model retry into an infinite loop.
-        # OpenRouter wraps native_finish_reason when the real reason differs
-        # from the standard field (e.g. finish_reason="tool_calls" but
-        # native_finish_reason="length" — model was cut off mid-tool-call).
+        # Detect abrupt stream termination
         finish_reason = choice.get("finish_reason")
         native_finish_reason = choice.get("native_finish_reason")
         if native_finish_reason:

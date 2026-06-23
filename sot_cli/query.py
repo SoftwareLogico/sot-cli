@@ -541,11 +541,11 @@ async def run_tool_loop(
             if completion.usage:
                 _merge_usage_totals(result.usage, completion.usage)
             from sot_cli.config.app import AppConfig
-            _cfg: AppConfig = runtime.config
+            _cfg = AppConfig = runtime.config
             if not is_task and _cfg.tools.play_finished_notification:
                 _play_turn_done_sound(_cfg)
 
-            _save_final_request_payload(request, conversation_state)
+            _save_final_request_payload(runtime, request, conversation_state, tools=round_request.tools)
             return result
 
         # ── SoT Step 6: Clean — save assistant to permanent history (no SoT) ──
@@ -571,11 +571,11 @@ async def run_tool_loop(
             if completion.text and not round_request.stream:
                 console.print(completion.text)
             from sot_cli.config.app import AppConfig
-            _cfg: AppConfig = runtime.config
+            _cfg = AppConfig = runtime.config
             if not is_task and _cfg.tools.play_finished_notification:
                 _play_turn_done_sound(_cfg)
 
-            _save_final_request_payload(request, conversation_state)
+            _save_final_request_payload(runtime, request, conversation_state, tools=round_request.tools)
             return result
 
         # ── Execute each tool call, rebuild SoT after EACH one ──
@@ -673,7 +673,7 @@ async def run_tool_loop(
                 result.text = message
                 result.tool_calls = []
                 from sot_cli.config.app import AppConfig
-                _cfg: AppConfig = runtime.config
+                _cfg = AppConfig = runtime.config
                 if not is_task and _cfg.tools.play_finished_notification:
                     _play_turn_done_sound(_cfg)
 
@@ -682,11 +682,11 @@ async def run_tool_loop(
             result.text = message
             result.tool_calls = []
             from sot_cli.config.app import AppConfig
-            _cfg: AppConfig = runtime.config
+            _cfg = AppConfig = runtime.config
             if not is_task and _cfg.tools.play_finished_notification:
                 _play_turn_done_sound(_cfg)
 
-            _save_final_request_payload(request, conversation_state)
+            _save_final_request_payload(runtime, request, conversation_state)
             return result
 
     message = _build_tool_loop_exhausted_message(effective_max_rounds, request.disable_delegation)
@@ -695,7 +695,7 @@ async def run_tool_loop(
         result.text = message
         result.tool_calls = []
         from sot_cli.config.app import AppConfig
-        _cfg: AppConfig = runtime.config
+        _cfg = AppConfig = runtime.config
         if not is_task and _cfg.tools.play_finished_notification:
             _play_turn_done_sound(_cfg)
 
@@ -706,19 +706,19 @@ async def run_tool_loop(
 
     # ── Play notification if configured ──
     from sot_cli.config.app import AppConfig
-    _cfg: AppConfig = runtime.config
+    _cfg = AppConfig = runtime.config
     if not is_task and _cfg.tools.play_finished_notification:
         _play_turn_done_sound(_cfg)
 
     from sot_cli.config.app import AppConfig
 
-    _cfg: AppConfig = runtime.config
+    _cfg = AppConfig = runtime.config
 
     if not is_task and _cfg.tools.play_finished_notification:
 
         _play_turn_done_sound(_cfg)
 
-
+    _save_final_request_payload(runtime, request, conversation_state, tools=round_request.tools if 'round_request' in locals() else None)
     return result
 
 
@@ -1002,30 +1002,55 @@ def _build_payload_messages(conversation_state: ConversationState, request: Prov
 
     return payload
 
-
-
-def _save_final_request_payload(request: ProviderRequest, conversation_state: ConversationState) -> None:
+def _save_final_request_payload(
+    runtime: AppRuntime,
+    request: ProviderRequest,
+    conversation_state: ConversationState,
+    tools: list[dict[str, Any]] | None = None,  # <--- Añadimos el parámetro opcional
+) -> None:
     """Persist the complete chat_history (including the final assistant message) to request.json.
 
     Called at every exit point of run_tool_loop so the last assistant message
     is never lost on session close. The saved payload is what
     _load_chat_history_from_request_jsons reads on session resume.
     """
-    from sot_cli.providers.openai_compat import _write_session_json
+    from sot_cli.providers.openai_compat import _write_session_json, build_chat_completions_payload
+    from sot_cli.tools import ToolRegistry
+    from dataclasses import replace
 
+    # 1. Reconstruimos la lista completa de mensajes actualizada con el turno
     payload_messages = _build_payload_messages(conversation_state, request)
-    payload_messages.insert(0, {"role": "system", "content": request.system_prompt})
 
-    _write_session_json(
-        "request",
-        {"url": f"provider:{request.provider_name}", "payload": {
-            "model": request.model,
-            "messages": payload_messages,
-            "stream": request.stream,
-        }},
-        session_id=request.session_id,
+    # 2. Obtenemos el adaptador de forma síncrona para leer las capacidades
+    adapter = runtime.provider_adapter(request.provider_name, request.model)
+
+    # 3. Reconstruimos el registro de herramientas para obtener los schemas reales
+    registry = ToolRegistry(
+        runtime,
+        request.session_id,
+        adapter.capability,
+        request.model,
+        request.disable_delegation,
+        conversation_state.sot,
+    )
+    real_tools = registry.schemas() if request.enable_tools else []
+
+    # 4. Clonamos el objeto request inyectando la conversación y las herramientas reales
+    updated_request = replace(
+        request, 
+        conversation_messages=payload_messages,
+        tools=real_tools
     )
 
+    # 5. Generamos el payload completo real con el formateador de OpenAI/Bedrock
+    full_payload = build_chat_completions_payload(updated_request, request.model)
+
+    # 6. Guardamos el payload completo en request.json y payload.json
+    _write_session_json(
+        "request",
+        {"url": f"provider:{request.provider_name}", "payload": full_payload},
+        session_id=request.session_id,
+    )
 
 def _build_tool_result_summary(tool_result: Any) -> str:
     """Build a metadata-only summary. Never include file content."""
