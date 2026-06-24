@@ -37,6 +37,7 @@ Cross-mode rules:
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 from sot_cli.tools.editor.text_utils import (
@@ -400,6 +401,56 @@ def _prepare_insert_replacement(content: str, anchor: int, prepared_text: str) -
 # ─── per-file engine ─────────────────────────────────────────────────────
 
 
+# ─── SoT line-number prefix stripping ────────────────────────────────────
+# The Source of Truth renders file contents with line numbers like `   123|<content>`
+# (see message_builder.build_sot_user_message). When the model copies content
+# from the SoT into edit_files old_string/new_string/before_context/after_context,
+# it often includes the leading `   123|` prefix. The actual file on disk does
+# NOT have this prefix, so the edit fails to match.
+#
+# This helper strips the prefix per-line, but ONLY when the prefix is at the
+# START of a line and matches the exact format `[ \t]*\d+\|`. Patterns like `|256|`
+# that appear mid-line (e.g., in CSV files or documents) are NOT stripped —
+# they're treated as content, not line markers.
+#
+# Conservative: if the first line doesn't have a prefix, we don't strip anything
+# (the model intentionally omitted line markers). If subsequent lines don't have
+# a prefix, we leave them as-is (mixed markers + content is preserved).
+_LINE_NUMBER_PREFIX_RE = re.compile(r'^[ \t]*\d+\|')
+
+
+def _strip_line_number_prefix(text: str) -> str | None:
+    """Strip SoT line-number prefixes from text. Returns None if no prefix detected.
+
+    Only strips prefixes that match `^[ \t]*\d+\|` at the START of each line.
+    Mid-line patterns like `|256|` are left untouched (they're content).
+    """
+    if not text:
+        return None
+
+    lines = text.split('\n')
+    if not lines:
+        return None
+
+    # First line must have a prefix — otherwise the model intentionally
+    # omitted line markers and we should not strip anything.
+    if not _LINE_NUMBER_PREFIX_RE.match(lines[0]):
+        return None
+
+    # Strip per-line: each line independently checks for a prefix.
+    stripped_lines = []
+    for line in lines:
+        match = _LINE_NUMBER_PREFIX_RE.match(line)
+        if match:
+            stripped_lines.append(line[match.end():])
+        else:
+            stripped_lines.append(line)
+
+    return '\n'.join(stripped_lines)
+
+
+
+
 def _apply_edits_to_one_file(arguments: dict[str, Any], root_dir: Path) -> dict[str, Any]:
     """Apply one or more atomic edits to a single text file.
 
@@ -414,6 +465,27 @@ def _apply_edits_to_one_file(arguments: dict[str, Any], root_dir: Path) -> dict[
     raw_path = _require_string(arguments, "path")
     path = resolve_path(raw_path, root_dir)
     edits = _require_edits(arguments)
+
+    # ── SoT line-number prefix stripping ──
+    # If the model copied content from the SoT (which renders files with
+    # `   123|<content>` line markers), strip those markers before matching.
+    # See _strip_line_number_prefix for the conservative per-line rules.
+    for edit in edits:
+        if edit["mode"] == "text":
+            for field in ("old_string", "new_string", "before_context", "after_context"):
+                value = edit.get(field)
+                if isinstance(value, str) and value:
+                    stripped = _strip_line_number_prefix(value)
+                    if stripped is not None:
+                        edit[field] = stripped
+        else:
+            # line_range and insert modes only have new_string as content
+            new_string = edit.get("new_string")
+            if isinstance(new_string, str) and new_string:
+                stripped = _strip_line_number_prefix(new_string)
+                if stripped is not None:
+                    edit["new_string"] = stripped
+
 
     # ── File-creation special case ──
     # Single text-mode edit with empty old_string against a missing file →

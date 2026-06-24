@@ -387,10 +387,17 @@ def _sanitize_messages_for_provider(
             tool_response_ids.add(tc_id)
             tool_response_by_id.setdefault(tc_id, entry)
 
+    # Track tool_call_ids that were successfully paired with a tool response
+    # during the emit pass. Used to preserve assistant messages whose
+    # tool_calls were all consumed by pairing — without this, a tool-call-only
+    # assistant (content=null) would be dropped even though its companion
+    # tool response survived, breaking the model's context on session resume.
+    paired_tool_call_ids: set[str] = set()
+    consumed_tool_call_ids: set[str] = set()
+
     # ── Pass 3: emit messages, applying schema firewall + compression ──
     sanitized: list[dict[str, Any]] = []
     pending_tool_call_ids: set[str] = set()
-    consumed_tool_call_ids: set[str] = set()
     # Pre-computed for each closed-turn assistant: the tool_call IDs we
     # are going to compress away. Their matching ``tool`` messages will
     # be dropped from the emit pass and replaced by a SYSTEM MESSAGE.
@@ -511,6 +518,7 @@ def _sanitize_messages_for_provider(
                         continue
                     surviving_calls.append(tc)
                     pending_tool_call_ids.add(tc_id)
+                    paired_tool_call_ids.add(tc_id)
 
                 if surviving_calls:
                     msg["tool_calls"] = surviving_calls
@@ -519,7 +527,19 @@ def _sanitize_messages_for_provider(
 
             content_is_empty = _is_effectively_empty_text(msg.get("content"))
             has_surviving_tool_calls = bool(msg.get("tool_calls"))
-            if content_is_empty and not has_surviving_tool_calls:
+            # Check if this assistant originally had tool_calls that were
+            # successfully paired (consumed by a matching tool response).
+            # This preserves tool-call-only assistants (content=null) whose
+            # calls were all consumed during pairing — without this check,
+            # the assistant message would be dropped even though its companion
+            # tool response survived in the payload.
+            original_had_paired_calls = False
+            if not has_surviving_tool_calls and isinstance(original.get("tool_calls"), list):
+                for tc in original["tool_calls"]:
+                    if isinstance(tc, dict) and tc.get("id") in consumed_tool_call_ids:
+                        original_had_paired_calls = True
+                        break
+            if content_is_empty and not has_surviving_tool_calls and not original_had_paired_calls:
                 continue
 
             sanitized.append(msg)
@@ -624,19 +644,29 @@ class OpenAICompatibleAdapter:
             # is reused to talk to any OpenAI-compatible service (so probing
             # would also be unreliable). We assume the optimistic defaults of
             # current frontier OpenAI-style models: tools on, vision + PDFs on,
-            # 400k context. If a downstream model is more limited, the API
-            # itself will reject the unsupported feature at request time —
-            # which is the right place to surface that.
+            # 1M context, audio and video support. If a downstream model is more
+            # limited, the API itself will reject the unsupported feature at
+            # request time — which is the right place to surface that.
             self.capability = ProviderCapability(
                 supports_tools=True,
                 supports_images=True,
                 supports_pdfs=True,
-                context_length=400_000,
+                supports_audio=True,
+                supports_video=True,
+                context_length=1_000_000,
                 modality="text+image->text",
             )
         else:
-            # xai and other unknown OpenAI-compatible names — minimal default.
-            self.capability = ProviderCapability(supports_tools=True)
+            # xai and other unknown OpenAI-compatible names — permissive defaults.
+            self.capability = ProviderCapability(
+                supports_tools=True,
+                supports_images=True,
+                supports_pdfs=True,
+                supports_audio=True,
+                supports_video=True,
+                context_length=1_000_000,
+                modality="text+image->text",
+            )
         self._capabilities_detected = True
 
     async def _detect_openrouter_capabilities(self) -> None:
@@ -745,7 +775,6 @@ class OpenAICompatibleAdapter:
 
         self.capability = ProviderCapability(
             supports_tools=bool(caps.get("trained_for_tool_use", False)),
-            supports_images=bool(caps.get("vision", False)),
             supports_pdfs=False,
             supports_audio=False,
             supports_video=False,
@@ -805,7 +834,6 @@ class OpenAICompatibleAdapter:
 
         self.capability = ProviderCapability(
             supports_tools="tools" in capabilities,
-            supports_images="vision" in capabilities,
             supports_pdfs=False,
             supports_audio=False,
             supports_video=False,
@@ -834,13 +862,14 @@ class OpenAICompatibleAdapter:
             raise ValueError("No models found in NVIDIA API. Check your API key or network.")
 
         # El endpoint /v1/models de NVIDIA devuelve una lista simple sin metadatos de arquitectura.
-        # Asumimos capacidades estándar OpenAI-compatible para proveedores de API.
+        # Asumimos capacidades optimistas para proveedores de API.
         self.capability = ProviderCapability(
             supports_tools=True,
-            supports_images=False,
-            supports_pdfs=False,
-            supports_audio=False,
-            supports_video=False,
+            supports_images=True,
+            supports_pdfs=True,
+            supports_audio=True,
+            supports_video=True,
+            context_length=1_000_000,
         )
 
     async def _detect_bedrock_capabilities(self) -> None:
@@ -862,7 +891,9 @@ class OpenAICompatibleAdapter:
                 supports_tools=True,
                 supports_images=True,
                 supports_pdfs=True,
-                context_length=256_000,
+                supports_audio=True,
+                supports_video=True,
+                context_length=1_000_000,
             )
             return
 
@@ -870,7 +901,9 @@ class OpenAICompatibleAdapter:
             supports_tools=True,
             supports_images=True,
             supports_pdfs=True,
-            context_length=256_000,
+            supports_audio=True,
+            supports_video=True,
+            context_length=1_000_000,
         )
 
 
@@ -1122,6 +1155,7 @@ def build_chat_completions_payload(request: ProviderRequest, resolved_model: str
 
     is_openai = request.provider_name == "openai"
     is_openrouter = request.provider_name == "openrouter"
+    is_bedrock = request.provider_name == "bedrock"
     # Only flips the wire-level treatment of OpenAI Chat Completions params.
     # Not applied to openrouter even when routing an OpenAI reasoning model
     # through it, because OpenRouter normalizes/strips unsupported params on
@@ -1135,14 +1169,8 @@ def build_chat_completions_payload(request: ProviderRequest, resolved_model: str
         "stream": request.stream,
     }
 
-    # Output token cap field — OpenAI deprecated `max_tokens` chat-completions-
-    # wide and reasoning-class models reject it with HTTP 400
-    # `unsupported_parameter`. Use `max_completion_tokens` for openai
-    # unconditionally (non-reasoning openai models still accept the new name)
-    # and keep `max_tokens` for everyone else, since most OpenAI-compatible
-    # servers in the wild (vLLM, llama.cpp server, Ollama, LM Studio, NVIDIA
-    # NIM) only know the legacy field name.
-    if is_openai:
+    # Usar max_completion_tokens para OpenAI, y también para Bedrock si el razonamiento está activo
+    if is_openai or (is_bedrock and request.reasoning_effort):
         payload["max_completion_tokens"] = request.max_output_tokens
     else:
         payload["max_tokens"] = request.max_output_tokens
@@ -1180,8 +1208,20 @@ def build_chat_completions_payload(request: ProviderRequest, resolved_model: str
     # OpenRouter / Bedrock reasoning effort — nested object format
     # OpenRouter docs: https://openrouter.ai/docs/features/reasoning
     # Bedrock Mantle is OpenAI-compatible and accepts the same format.
-    if (is_openrouter or request.provider_name == "bedrock") and request.reasoning_effort:
+    # OpenRouter reasoning effort
+    if is_openrouter and request.reasoning_effort:
         payload["reasoning"] = {"effort": request.reasoning_effort}
+
+    # Bedrock Mantle reasoning effort
+    if request.provider_name == "bedrock" and request.reasoning_effort:
+        effort = request.reasoning_effort.lower()
+        if effort == "xhigh":
+            effort = "high"
+        elif effort == "none":
+            effort = "minimal"
+        
+        if effort in ("minimal", "low", "medium", "high"):
+            payload["reasoning_effort"] = effort
 
     # ── NVIDIA NIM reasoning / thinking support ───────────────────────
     # NVIDIA hosts many model families on the same API endpoint. Each
@@ -1242,6 +1282,14 @@ def _sanitize_tool_schema_for_openai(tool: dict[str, Any]) -> dict[str, Any]:
 def _events_from_chunk(chunk: dict[str, Any]) -> list[ProviderEvent]:
     events: list[ProviderEvent] = []
 
+    # 1. Comprobamos si el chunk reporta un error de generación del proveedor a mitad de stream
+    err = chunk.get("error")
+    if isinstance(err, dict):
+        err_msg = err.get("message") or err.get("type") or "Unknown streaming error"
+        events.append(ProviderEvent(type="error", payload={"message": f"Mantle Stream Error: {err_msg}"}))
+        return events
+
+    # 2. Procesamiento estándar si no hay errores
     usage = chunk.get("usage")
     if usage:
         events.append(ProviderEvent(type="usage", payload={"usage": usage}))
@@ -1267,13 +1315,7 @@ def _events_from_chunk(chunk: dict[str, Any]) -> list[ProviderEvent]:
         if tool_calls:
             events.append(ProviderEvent(type="tool_call", payload={"tool_calls": tool_calls}))
 
-        # Detect abrupt stream termination: finish_reason == "length" means the
-        # model hit its max_output_tokens limit mid-response. Emit a "finished"
-        # event so the stream handlers can warn the user and abort cleanly
-        # instead of letting the model retry into an infinite loop.
-        # OpenRouter wraps native_finish_reason when the real reason differs
-        # from the standard field (e.g. finish_reason="tool_calls" but
-        # native_finish_reason="length" — model was cut off mid-tool-call).
+        # Detect abrupt stream termination
         finish_reason = choice.get("finish_reason")
         native_finish_reason = choice.get("native_finish_reason")
         if native_finish_reason:

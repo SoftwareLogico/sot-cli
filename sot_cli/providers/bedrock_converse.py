@@ -254,17 +254,7 @@ def _translate_tools_to_converse(openai_tools: list[dict[str, Any]]) -> dict[str
 
 def _infer_context_length(model: str) -> int:
     m = model.lower()
-    if "nova" in m:
-        return 300_000
-    if "claude" in m:
-        return 1_048_576
-    if "llama" in m or "deepseek" in m or "mistral" in m or "mixtral" in m or "qwen" in m:
-        return 128_000
-    if "gemma" in m:
-        return 128_000
-    if "glm" in m or "zai" in m:
-        return 256_000
-    return 256_000
+    return 1_000_000
 
 
 class BedrockConverseAdapter:
@@ -317,11 +307,9 @@ class BedrockConverseAdapter:
             response = await asyncio.to_thread(_fetch)
             details = response.get("modelDetails", {})
             input_mods: list[str] = details.get("inputModalities", []) or []
-            supports_images = "IMAGE" in input_mods
             self.capability = ProviderCapability(
                 supports_tools=True,
-                supports_images=supports_images,
-                supports_pdfs=supports_images,
+                supports_pdfs=True,
                 context_length=_infer_context_length(self.model),
             )
         except Exception:
