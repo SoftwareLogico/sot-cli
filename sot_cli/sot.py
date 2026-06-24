@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from sot_cli.constants import SOT_MARKER
+from sot_cli.constants import SOT_MARKER, IMAGE_EXTENSIONS, PDF_EXTENSIONS, AUDIO_EXTENSIONS, VIDEO_EXTENSIONS
 from sot_cli.message_builder import build_sot_user_message
 from sot_cli.providers.base import ProviderCapability, ProviderRequest
 from sot_cli.runtime import AppRuntime
@@ -147,6 +147,19 @@ def merge_session_into_tracked(
         _store_file_token_estimate(state, path)
         if _is_session_backed_path(path, state.session_source_entries):
             state.session_tracked_file_paths.add(path)
+
+    # Rescatar archivos multimedia que fueron omitidos por ser binarios
+    for skipped_msg in bundle.skipped:
+        if skipped_msg.startswith("cannot-include-binary: "):
+            bin_path = skipped_msg.replace("cannot-include-binary: ", "").strip()
+            ext = bin_path.split(".")[-1].lower() if "." in bin_path else ""
+            
+            if ext in IMAGE_EXTENSIONS | PDF_EXTENSIONS | AUDIO_EXTENSIONS | VIDEO_EXTENSIONS:
+                if bin_path not in state.tracked_media:
+                    # Una lista vacía forzará a _refresh_tracked_media_from_disk a leer el archivo
+                    state.tracked_media[bin_path] = []
+                if _is_session_backed_path(bin_path, state.session_source_entries):
+                    state.session_tracked_media_paths.add(bin_path)
 
 
 def refresh_tracked_state_from_disk(

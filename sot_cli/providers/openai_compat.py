@@ -644,19 +644,29 @@ class OpenAICompatibleAdapter:
             # is reused to talk to any OpenAI-compatible service (so probing
             # would also be unreliable). We assume the optimistic defaults of
             # current frontier OpenAI-style models: tools on, vision + PDFs on,
-            # 400k context. If a downstream model is more limited, the API
-            # itself will reject the unsupported feature at request time —
-            # which is the right place to surface that.
+            # 1M context, audio and video support. If a downstream model is more
+            # limited, the API itself will reject the unsupported feature at
+            # request time — which is the right place to surface that.
             self.capability = ProviderCapability(
                 supports_tools=True,
                 supports_images=True,
                 supports_pdfs=True,
-                context_length=400_000,
+                supports_audio=True,
+                supports_video=True,
+                context_length=1_000_000,
                 modality="text+image->text",
             )
         else:
-            # xai and other unknown OpenAI-compatible names — minimal default.
-            self.capability = ProviderCapability(supports_tools=True)
+            # xai and other unknown OpenAI-compatible names — permissive defaults.
+            self.capability = ProviderCapability(
+                supports_tools=True,
+                supports_images=True,
+                supports_pdfs=True,
+                supports_audio=True,
+                supports_video=True,
+                context_length=1_000_000,
+                modality="text+image->text",
+            )
         self._capabilities_detected = True
 
     async def _detect_openrouter_capabilities(self) -> None:
@@ -852,12 +862,14 @@ class OpenAICompatibleAdapter:
             raise ValueError("No models found in NVIDIA API. Check your API key or network.")
 
         # El endpoint /v1/models de NVIDIA devuelve una lista simple sin metadatos de arquitectura.
-        # Asumimos capacidades estándar OpenAI-compatible para proveedores de API.
+        # Asumimos capacidades optimistas para proveedores de API.
         self.capability = ProviderCapability(
             supports_tools=True,
-            supports_pdfs=False,
-            supports_audio=False,
-            supports_video=False,
+            supports_images=True,
+            supports_pdfs=True,
+            supports_audio=True,
+            supports_video=True,
+            context_length=1_000_000,
         )
 
     async def _detect_bedrock_capabilities(self) -> None:
@@ -879,6 +891,8 @@ class OpenAICompatibleAdapter:
                 supports_tools=True,
                 supports_images=True,
                 supports_pdfs=True,
+                supports_audio=True,
+                supports_video=True,
                 context_length=1_000_000,
             )
             return
@@ -887,6 +901,8 @@ class OpenAICompatibleAdapter:
             supports_tools=True,
             supports_images=True,
             supports_pdfs=True,
+            supports_audio=True,
+            supports_video=True,
             context_length=1_000_000,
         )
 
