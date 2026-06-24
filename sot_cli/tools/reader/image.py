@@ -68,14 +68,13 @@ def read_image(path: Path, ext: str, size_bytes: int, supports_images: bool) -> 
         payload["display_height"] = display_height
 
     supplemental_messages = []
-    if supports_images:
-        supplemental_messages.append(
-            _tool_meta_message(
-                [
-                    _text_part(f"Supplemental image content from read_text_file for {path}."),
-                    _image_part(mime, b64),
-                ]
-            )
+    supplemental_messages.append(
+        _tool_meta_message(
+            [
+                _text_part(f"Supplemental image content from read_text_file for {path}."),
+                _image_part(mime, b64),
+            ]
         )
+    )
 
     return ToolPayload(payload=payload, supplemental_messages=supplemental_messages)

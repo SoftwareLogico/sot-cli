@@ -44,7 +44,7 @@ def _notebook_to_content_parts(
             if isinstance(output_text, str) and output_text:
                 _append_text_part(parts, f"Cell {cell['index']} output:\n{output_text}")
             image = output.get("image")
-            if supports_images and isinstance(image, dict):
+            if isinstance(image, dict):
                 _append_text_part(parts, f"Cell {cell['index']} image output.")
                 parts.append(_image_part(image["mime_type"], image["base64"]))
     return parts

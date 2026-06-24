@@ -84,15 +84,14 @@ def read_audio(path: Path, ext: str, size_bytes: int, supports_audio: bool) -> T
         payload["probe"] = media_probe
 
     supplemental_messages: list[dict[str, Any]] = []
-    if supports_audio:
-        supplemental_messages.append(
-            _tool_meta_message(
-                [
-                    _text_part(f"Supplemental audio content from read_text_file for {path}."),
-                    _audio_part(_guess_audio_format(ext, mime_type), base64.b64encode(raw_bytes).decode("ascii")),
-                ]
-            )
+    supplemental_messages.append(
+        _tool_meta_message(
+            [
+                _text_part(f"Supplemental audio content from read_text_file for {path}."),
+                _audio_part(_guess_audio_format(ext, mime_type), base64.b64encode(raw_bytes).decode("ascii")),
+            ]
         )
+    )
 
     return ToolPayload(payload=payload, supplemental_messages=supplemental_messages)
 
@@ -112,14 +111,13 @@ def read_video(path: Path, ext: str, size_bytes: int, supports_video: bool) -> T
         payload["probe"] = media_probe
 
     supplemental_messages: list[dict[str, Any]] = []
-    if supports_video:
-        supplemental_messages.append(
-            _tool_meta_message(
-                [
-                    _text_part(f"Supplemental video content from read_text_file for {path}."),
-                    _video_part(mime_type, base64.b64encode(raw_bytes).decode("ascii")),
-                ]
-            )
+    supplemental_messages.append(
+        _tool_meta_message(
+            [
+                _text_part(f"Supplemental video content from read_text_file for {path}."),
+                _video_part(mime_type, base64.b64encode(raw_bytes).decode("ascii")),
+            ]
         )
+    )
 
     return ToolPayload(payload=payload, supplemental_messages=supplemental_messages)
