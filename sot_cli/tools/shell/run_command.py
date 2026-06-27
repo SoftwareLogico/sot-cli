@@ -434,8 +434,6 @@ def execute_run_command(
     default_command_timeout_seconds: int,
 ) -> dict[str, Any]:
     command = _require_string(arguments, "command", strip=False)
-    if _looks_like_recursive_sot_invocation(command):
-        raise ValueError("Recursive sot-cli invocation is not allowed from run_command. Use the current tools directly.")
     cwd_value = arguments.get("cwd")
     stdin_text = arguments.get("stdin")
     stdin_bytes = stdin_text.encode("utf-8") if isinstance(stdin_text, str) else None
