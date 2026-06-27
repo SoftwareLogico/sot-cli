@@ -27,6 +27,23 @@ from sot_cli.tools.session.control import (
 from sot_cli.tools.session.list_tasks import execute_list_tasks, execute_wait_task
 from sot_cli.tools.shell.open_path import execute_open_path
 from sot_cli.tools.schemas import get_tool_schemas
+from sot_cli.tools.browser.browse import (
+    execute_browser_back,
+    execute_browser_click,
+    execute_browser_close,
+    execute_browser_forward,
+    execute_browser_get_html,
+    execute_browser_get_text,
+    execute_browser_key,
+    execute_browser_navigate,
+    execute_browser_open,
+    execute_browser_screenshot,
+    execute_browser_scroll,
+    execute_browser_tab_list,
+    execute_browser_tab_new,
+    execute_browser_tab_switch,
+    execute_browser_type,
+)
 from sot_cli.tools.shell.run_command import execute_run_command
 
 
@@ -97,6 +114,21 @@ class ToolRegistry:
             "attach_path_to_source": self._attach_path_to_source,
             "list_tasks": self._list_tasks,
             "clean_sot": self._clean_sot,
+            "browser_open": self._browser_open,
+            "browser_close": self._browser_close,
+            "browser_navigate": self._browser_navigate,
+            "browser_screenshot": self._browser_screenshot,
+            "browser_click": self._browser_click,
+            "browser_type": self._browser_type,
+            "browser_key": self._browser_key,
+            "browser_scroll": self._browser_scroll,
+            "browser_get_html": self._browser_get_html,
+            "browser_get_text": self._browser_get_text,
+            "browser_back": self._browser_back,
+            "browser_forward": self._browser_forward,
+            "browser_tab_new": self._browser_tab_new,
+            "browser_tab_list": self._browser_tab_list,
+            "browser_tab_switch": self._browser_tab_switch,
         }
         # Only expose delegate_task when delegation is allowed for this registry/session.
         if not self.disable_delegation:
@@ -244,3 +276,48 @@ class ToolRegistry:
 
     def _wait_task(self, arguments: dict[str, Any]) -> dict[str, Any]:
         return execute_wait_task(arguments, self.runtime.paths.sessions_dir, self.session_id)
+
+    def _browser_open(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_open(arguments)
+
+    def _browser_close(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_close(arguments)
+
+    def _browser_navigate(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_navigate(arguments)
+
+    def _browser_screenshot(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_screenshot(arguments)
+
+    def _browser_click(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_click(arguments)
+
+    def _browser_type(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_type(arguments)
+
+    def _browser_key(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_key(arguments)
+
+    def _browser_scroll(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_scroll(arguments)
+
+    def _browser_get_html(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_get_html(arguments)
+
+    def _browser_get_text(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_get_text(arguments)
+
+    def _browser_back(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_back(arguments)
+
+    def _browser_forward(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_forward(arguments)
+
+    def _browser_tab_new(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_tab_new(arguments)
+
+    def _browser_tab_list(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_tab_list(arguments)
+
+    def _browser_tab_switch(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return execute_browser_tab_switch(arguments)

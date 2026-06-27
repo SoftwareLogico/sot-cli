@@ -1,6 +1,6 @@
 # sot-cli 🚀 Limitless Local AI Agent
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Providers](https://img.shields.io/badge/Providers-OpenRouter%20%7C%20LMStudio%20%7C%20OpenAI%20%7C%20Ollama%20%7C%20NVIDIA-brightgreen.svg)](ARCHITECTURE.md)
 [![Stars](https://img.shields.io/github/stars/softwarelogico/sot-cli?style=social)](https://github.com/softwarelogico/sot-cli)
 [![License](https://img.shields.io/github/license/SoftwareLogico/sot-cli?style=flat&logo=mit)](LICENSE)
@@ -51,13 +51,13 @@ cd sot-cli
 
 ```bash
 #uv
-uv venv <env_name> --python 3.10
+uv venv <env_name> --python 3.11
 source <env_name>/bin/activate
 uv pip install -e .
 uv run sot-cli
 
 #conda
-conda create -n <env_name> python=3.10
+conda create -n <env_name> python=3.11
 conda activate <env_name>
 pip install -e .
 sot-cli

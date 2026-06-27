@@ -36,6 +36,8 @@ Executes a headless agent session. Used internally by the `delegate_task` tool t
 
 ## Running without an environment manager
 
+Requires Python 3.11+.
+
 Install globally with pip:
 
 ```

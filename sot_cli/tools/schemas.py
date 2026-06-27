@@ -5,6 +5,21 @@ from typing import Any
 from sot_cli.config import KNOWN_PROVIDERS
 from sot_cli.config.prompts import (
     ATTACH_PATH_PROMPT,
+    BROWSE_BACK_PROMPT,
+    BROWSE_CLICK_PROMPT,
+    BROWSE_CLOSE_PROMPT,
+    BROWSE_FORWARD_PROMPT,
+    BROWSE_GET_HTML_PROMPT,
+    BROWSE_GET_TEXT_PROMPT,
+    BROWSE_KEY_PROMPT,
+    BROWSE_NAVIGATE_PROMPT,
+    BROWSE_OPEN_PROMPT,
+    BROWSE_SCREENSHOT_PROMPT,
+    BROWSE_SCROLL_PROMPT,
+    BROWSE_TAB_LIST_PROMPT,
+    BROWSE_TAB_NEW_PROMPT,
+    BROWSE_TAB_SWITCH_PROMPT,
+    BROWSE_TYPE_PROMPT,
     CLEAN_SOT_PROMPT,
     DELEGATE_TASK_PROMPT,
     DELETE_FILE_PROMPT,
@@ -306,6 +321,134 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                     "required": ["task_prompt"],
                     "additionalProperties": False,
                 },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_open",
+                "description": BROWSE_OPEN_PROMPT,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "profile": {"type": "string", "description": "'fresh' for clean browser, or 'Chrome'/'Brave'/'Edge' for real profile. Default 'fresh'."},
+                        "url": {"type": "string", "description": "URL to navigate to after opening."},
+                        "incognito": {"type": "boolean", "description": "Open in incognito mode. Default false."},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_close",
+                "description": BROWSE_CLOSE_PROMPT,
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_navigate",
+                "description": BROWSE_NAVIGATE_PROMPT,
+                "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"], "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_screenshot",
+                "description": BROWSE_SCREENSHOT_PROMPT,
+                "parameters": {"type": "object", "properties": {"full_page": {"type": "boolean"}}, "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_click",
+                "description": BROWSE_CLICK_PROMPT,
+                "parameters": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"], "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_type",
+                "description": BROWSE_TYPE_PROMPT,
+                "parameters": {"type": "object", "properties": {"text": {"type": "string"}, "press_enter": {"type": "boolean"}}, "required": ["text"], "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_key",
+                "description": BROWSE_KEY_PROMPT,
+                "parameters": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"], "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_scroll",
+                "description": BROWSE_SCROLL_PROMPT,
+                "parameters": {"type": "object", "properties": {"direction": {"type": "string", "enum": ["up", "down"]}, "amount": {"type": "integer"}}, "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_get_html",
+                "description": BROWSE_GET_HTML_PROMPT,
+                "parameters": {"type": "object", "properties": {"max_length": {"type": "integer"}}, "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_get_text",
+                "description": BROWSE_GET_TEXT_PROMPT,
+                "parameters": {"type": "object", "properties": {"max_length": {"type": "integer"}}, "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_back",
+                "description": BROWSE_BACK_PROMPT,
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_forward",
+                "description": BROWSE_FORWARD_PROMPT,
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_tab_new",
+                "description": BROWSE_TAB_NEW_PROMPT,
+                "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_tab_list",
+                "description": BROWSE_TAB_LIST_PROMPT,
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_tab_switch",
+                "description": BROWSE_TAB_SWITCH_PROMPT,
+                "parameters": {"type": "object", "properties": {"index": {"type": "integer"}}, "required": ["index"], "additionalProperties": False},
             },
         },
         {

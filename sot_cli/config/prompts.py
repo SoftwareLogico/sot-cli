@@ -413,6 +413,59 @@ FILE_IN_SOT_STUB = (
 )
 
 
+BROWSE_OPEN_PROMPT = """\
+Open a browser or connect to an existing one. Uses browser-use's BrowserSession internally.
+
+Args:
+  profile (str): 'fresh' for clean Chromium, or 'Chrome'/'Brave'/'Edge' for user's real browser with cookies.
+  url (str, optional): URL to navigate to after opening.
+  incognito (bool, optional): Open in incognito mode. Default false.
+
+When using a real browser profile, if Chrome is already running without CDP,
+the tool will report an error asking the user to close Chrome first (Cmd+Q).
+Once Chrome is relaunched with CDP, subsequent calls reconnect automatically."""
+
+BROWSE_CLOSE_PROMPT = """\
+Close the active browser session. No parameters."""
+
+BROWSE_NAVIGATE_PROMPT = """\
+Navigate to a URL. Requires an active browser session.
+Args: url (str, required)"""
+
+BROWSE_SCREENSHOT_PROMPT = """\
+Take a screenshot of the current page. Returns base64 image.
+Args: full_page (bool, optional) — capture full scrollable page. Default false."""
+
+BROWSE_CLICK_PROMPT = """\
+Click at X,Y coordinates on the page.
+Args: x (int, required), y (int, required)"""
+
+BROWSE_TYPE_PROMPT = """\
+Type text at the current cursor position.
+Args: text (str, required), press_enter (bool, optional)"""
+
+BROWSE_KEY_PROMPT = """\
+Press a keyboard key.
+Args: key (str, required) — Enter, Tab, Escape, Backspace, ArrowDown, ArrowUp, etc."""
+
+BROWSE_SCROLL_PROMPT = """\
+Scroll the page.
+Args: direction (str) — 'up' or 'down'. Default 'down'. amount (int) — pixels. Default 500."""
+
+BROWSE_GET_HTML_PROMPT = """\
+Get the HTML content of the current page.
+Args: max_length (int, optional) — max characters. Default 5000."""
+
+BROWSE_GET_TEXT_PROMPT = """\
+Get visible text content of the current page (stripped HTML).
+Args: max_length (int, optional) — max characters. Default 5000."""
+
+BROWSE_BACK_PROMPT = """Go back in browser history. No parameters."""
+BROWSE_FORWARD_PROMPT = """Go forward in browser history. No parameters."""
+BROWSE_TAB_NEW_PROMPT = """Open a new browser tab. Args: url (str, optional)"""
+BROWSE_TAB_LIST_PROMPT = """List all open browser tabs. No parameters."""
+BROWSE_TAB_SWITCH_PROMPT = """Switch to a tab by index. Args: index (int, required)"""
+
 DELEGATED_TASK_WRAPPER = """Delegated sub-agent execution rules:
 - Stay strictly inside the paths explicitly named in the task. Do not add extra roots or directories unless the task explicitly allows it.
 - If the task says to use only one tool family, obey that exactly.
