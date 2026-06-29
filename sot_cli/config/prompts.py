@@ -218,7 +218,10 @@ Usage:
 - Use case_insensitive for case-insensitive matching.
 - Use multiline for patterns that span multiple lines.
 - Results are capped at head_limit (default 200) to protect context size. Use offset to paginate through large result sets, or set head_limit to 0 for unlimited (use sparingly).
-- Typical workflow: search_code (find where) -> read_files (batch the reads) -> edit_files (batch every planned change across all files in ONE call)."""
+- Typical workflow: search_code (find where) -> read_files (batch the reads) -> edit_files (batch every planned change across all files in ONE call).
+- DO NOT ABUSE this tool, use it only for specific cases, if this tool is used several times in a row, the token comsumption will be masive, use read_files instead.
+"""
+
 
 RUN_COMMAND_PROMPT = """\
 Run a local shell command on this machine. FULL UNRESTRICTED ACCESS to the operating system — write one-liners or mini-scripts in the active shell (see HOST ENVIRONMENT for the exact shell: bash, zsh, PowerShell, cmd, or other), run python/node/ruby/go programs, pipe tools together, execute conditional logic to save turns, invoke compilers, package managers, version control, databases, network utilities, or compose any sequence the host OS supports. 

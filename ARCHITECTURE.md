@@ -186,6 +186,7 @@ No parameters. Returns delegated tasks and status (RUNNING/COMPLETED). Prefer `w
 | `compression_reasoning_trunc_chars` | `240`   | Hard cap (chars) on the `reasoning` and the merged `reasoning_details` text of any tool-bearing assistant message in CLOSED turns when the outbound payload is built. Same cap is also used to clip the reasoning excerpt embedded in the `SYSTEM MESSAGE:` line that replaces successful `write_file` / `edit_files` pairs in old turns. The reasoning of the final user-facing assistant message of a closed turn (no `tool_calls`) is never truncated. The active turn is never compressed at all. Set to `0` to disable the cap (full reasoning round-trips for every turn). |
 | `play_finished_notification`          | `true`   | Play a short `.wav` sound from `assets/turn_done.wav` when a turn finishes. Uses `afplay` (macOS), `winsound` (Windows), or `aplay`/`paplay` (Linux). Useful when working away from the terminal — the audio tells you the model is done without having to stare at the screen. |
 | `max_readable_file_tokens`             | `64000`  | Max estimated tokens a single text file can have before `read_files` warns and requires `force: true`. The warning is triggered regardless of remaining context space — even when there is plenty of room, files above this threshold are blocked to prevent accidental context saturation. The estimate uses `tiktoken` with `o200k_base`. Set to `0` to disable the check entirely. |
+| `max_readable_file_tokens`             | `64000`  | Max estimated tokens a single text file can have before `read_files` warns and requires `force: true`. The warning is triggered regardless of remaining context space — even when there is plenty of room, files above this threshold are blocked to prevent accidental context saturation. The estimate uses `tiktoken` with `o200k_base`. Set to `0` to disable the check entirely. |
 
 ## Provider configuration (`[providers.X]`)
 
@@ -559,6 +560,43 @@ Inspect the current session: provider, model, temperature, max output tokens, an
 #### `update_session`
 
 Change runtime parameters for future turns in the current session: `title`, `provider`, `model`, `temperature`, `max_output_tokens`. At least one field required.
+
+## Browser Tools
+
+`sot-cli` includes 15 browser automation tools powered by [browser-use](https://github.com/browser-use/browser-use). The agent can browse the web, interact with elements, take screenshots, and manage tabs — all from the terminal.
+
+### Browser profiles
+
+- `fresh`: Clean Chromium session with no cookies or extensions (default).
+- `Chrome` / `Brave` / `Edge`: Real browser profiles with cookies, bookmarks, and extensions. Requires the browser to be launched with CDP support (the runtime handles this automatically for Chrome-based browsers on macOS).
+
+### Tool reference
+
+| Tool | Description |
+| ---- | ----------- |
+| `browser_open` | Open or connect to a browser. Args: `profile` (fresh/Chrome/Brave/Edge), `url` (optional). |
+| `browser_close` | Close the active browser session. |
+| `browser_navigate` | Navigate to a URL. Args: `url` (required). |
+| `browser_screenshot` | Take a screenshot of the current page. Saves to `/tmp/sot_browser_screenshot.png`. Args: `full_page` (optional bool). |
+| `browser_click` | Click at X,Y coordinates. Args: `x`, `y` (required). |
+| `browser_type` | Type text at cursor position. Args: `text` (required), `press_enter` (optional bool). |
+| `browser_key` | Press a keyboard key. Args: `key` (required) — Enter, Tab, Escape, etc. |
+| `browser_scroll` | Scroll the page. Args: `direction` (up/down), `amount` (pixels, default 500). |
+| `browser_get_html` | Get page HTML content. Args: `max_length` (default 5000). |
+| `browser_get_text` | Get visible text content (stripped HTML). Args: `max_length` (default 5000). |
+| `browser_back` | Go back in browser history. |
+| `browser_forward` | Go forward in browser history. |
+| `browser_tab_new` | Open a new tab. Args: `url` (optional). |
+| `browser_tab_list` | List all open tabs with title and URL. |
+| `browser_tab_switch` | Switch to a tab by index. Args: `index` (required). |
+
+### Vision-based navigation
+
+The agent uses a combination of screenshots and DOM text to understand page layout. When the HTML structure is complex or confusing, the agent falls back to the visual screenshot for reliable element targeting. This dual approach works on SPAs, traditional pages, and sites with dynamic content.
+
+### Delegation for web research
+
+Heavy web research tasks can be delegated to sub-agents. The sub-agent browses the web, collects information, and returns a clean markdown report to the Boss — keeping the main context clean.
 
 ## Known issues
 
