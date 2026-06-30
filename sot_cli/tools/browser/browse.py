@@ -339,18 +339,23 @@ def execute_browser_get_html(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def execute_browser_get_text(arguments: dict[str, Any]) -> dict[str, Any]:
-    max_length = arguments.get("max_length", 5000)
+    max_length = arguments.get("max_length", 50000)
 
     async def _text():
         page = await _get_page()
         if not page:
             return None
         content = await page.evaluate("() => document.body.innerText")
-        truncated = content[:max_length] if len(content) > max_length else content
+
+        # Guardar el texto completo en un archivo (similar a screenshot)
+        text_path = "/tmp/sot_browser_get_text.txt"
+        with open(text_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
         return {
             "title": await page.title(),
             "url": page.url,
-            "text": truncated,
+            "text_file_path": text_path,
             "total_length": len(content),
         }
 

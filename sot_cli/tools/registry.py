@@ -305,7 +305,8 @@ class ToolRegistry:
         return execute_browser_get_html(arguments)
 
     def _browser_get_text(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        return execute_browser_get_text(arguments)
+        result = execute_browser_get_text(arguments)
+        return result
 
     def _browser_back(self, arguments: dict[str, Any]) -> dict[str, Any]:
         return execute_browser_back(arguments)

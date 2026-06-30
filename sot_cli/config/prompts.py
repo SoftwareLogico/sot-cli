@@ -523,7 +523,9 @@ Args: max_length (int, optional) — max characters. Default 5000."""
 
 BROWSE_GET_TEXT_PROMPT = """\
 Get visible text content of the current page (stripped HTML).
-Args: max_length (int, optional) — max characters. Default 5000."""
+Args: max_length (int, optional) — max characters. Default 50000.
+Note: The full text is always saved to /tmp/sot_browser_get_text.txt and automatically tracked in the SoT.
+If the file already exists in SoT, it will be automatically updated when you call this tool again."""
 
 BROWSE_BACK_PROMPT = """Go back in browser history. No parameters."""
 BROWSE_FORWARD_PROMPT = """Go forward in browser history. No parameters."""
