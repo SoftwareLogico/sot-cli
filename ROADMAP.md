@@ -20,14 +20,11 @@ Objective: Add first-class support for `xAI` and `anthropic` providers before mo
 
 Objective: Give the agent the ability to browse the web exactly like a human would, to find documentation, read issues, or interact with web apps.
 
-### Deliverables
-
-- Integration with a headless browser accessible via tools.
-- Specialized tools for the agent to navigate, click, type, and read the DOM.
-- Visual or DOM-to-text translation so the agent understands the page layout without blowing up the context window.
-- Ability to delegate heavy web-research tasks to a sub-agent that surfs the web and returns a clean markdown report to the main SoT.
+_Completed._ 15 browser tools powered by browser-use. Supports clean Chromium and real browser profiles (Chrome, Brave, Edge). Tools include navigation, click, type, keyboard, scroll, screenshot, HTML/text extraction, back/forward, and full tab management (new, list, switch). Agent uses screenshots + DOM text for page understanding.
 
 ## Phase 7: User-Friendly Web Interface
+
+_Current._
 
 Objective: Make `sot-cli` accessible to less experienced users through an intuitive, visual web-based UI that hides the terminal complexity while retaining full power-user access.
 

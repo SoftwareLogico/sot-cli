@@ -1,6 +1,6 @@
 # sot-cli 🚀 Limitless Local AI Agent
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Providers](https://img.shields.io/badge/Providers-OpenRouter%20%7C%20LMStudio%20%7C%20OpenAI%20%7C%20Ollama%20%7C%20NVIDIA-brightgreen.svg)](ARCHITECTURE.md)
 [![Stars](https://img.shields.io/github/stars/softwarelogico/sot-cli?style=social)](https://github.com/softwarelogico/sot-cli)
 [![License](https://img.shields.io/github/license/SoftwareLogico/sot-cli?style=flat&logo=mit)](LICENSE)
@@ -25,12 +25,25 @@ The name `sot-cli` is a direct nod to the architectural pattern it is built arou
 - **📊 SoT Method**: Fresh files from disk every turn. No token bloat, always up-to-date.
 - **🤖 Async Multi-Agent**: Delegate trial-and-error to cheap sub-agents (empty ctx).
 - **⚡ Batch Orchestration**: Multi-tools + bash/Python scripts in ONE turn.
-- **🔧 Full Tools**: 19 built-in (incl. unrestricted shell, regex code search, batched multi-file surgical edits) + MCP extensible.
+- **🔧 Full Tools**: 31 built-in (incl. unrestricted shell, regex code search, batched multi-file surgical edits, 15 browser automation tools) + MCP extensible.
 - **🌐 Multi-Provider**: Switch OpenRouter/LMStudio/OpenAI/Ollama/NVIDIA/Bedrock live.
+- **🖥️ Browser Automation**: Human-like web browsing — navigate, click, type, screenshot, and tab management (powered by browser-use). Use your real Chrome/Brave/Edge profiles or a clean session.
 - **💰 Native Prompt Caching**: Payload architecture designed for prefix-matching, saving up to 50% API costs on long histories by caching static dialogue and keeping dynamic files at the bottom.
 - **🧠 Context Awareness**: Real-time context limit tracking (Allocated vs. Max) with visual terminal warnings to prevent token overflow.
 
 👉 [SoT](SoT_Method.md) | [Tools](ARCHITECTURE.md) | [Roadmap](ROADMAP.md)
+
+## 🖥️ Browser Automation
+
+`sot-cli` includes 15 built-in browser tools powered by [browser-use](https://github.com/browser-use/browser-use). The agent can browse the web exactly like a human — navigate pages, click elements, type text, take screenshots, and manage tabs.
+
+**Supported profiles:**
+- `fresh` — clean Chromium session (default)
+- `Chrome` / `Brave` / `Edge` — your real browser profiles with cookies and extensions
+
+The agent uses screenshots and DOM text to understand page layout, so it works on any website including SPAs.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md#browser-tools) for the full browser tool reference.
 
 ## Platform Compatibility
 
@@ -51,13 +64,13 @@ cd sot-cli
 
 ```bash
 #uv
-uv venv <env_name> --python 3.10
+uv venv <env_name> --python 3.11
 source <env_name>/bin/activate
 uv pip install -e .
 uv run sot-cli
 
 #conda
-conda create -n <env_name> python=3.10
+conda create -n <env_name> python=3.11
 conda activate <env_name>
 pip install -e .
 sot-cli

@@ -1,8 +1,9 @@
-"""Sot-cli structure updater — merge sot.toml with sot.example.toml safely.
+"""Sot-cli structure updater — surgically add missing keys from sot.example.toml.
 
-Adds new keys from the example, removes keys that no longer exist in the
-example, and **never** overwrites user values. Always creates a timestamped
-backup before writing.
+Only APPENDS keys that exist in the example but are missing in the user file.
+Never overwrites user values. Never removes user-only keys. Never rewrites
+the entire file (preserves comments and formatting). Creates a backup only
+when actual keys are being added.
 """
 
 from __future__ import annotations
@@ -14,29 +15,24 @@ import shutil
 from datetime import datetime
 
 
-def _deep_merge_structure(example: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
-    """Merge two TOML dicts: example provides the structure, user provides values.
+def _banner(text: str) -> str:
+    return f"\n  {text}"
 
-    - Keys in example that exist in user → keep user's value.
-    - Keys in example that are NEW → use example's default.
-    - Keys ONLY in user (not in example) → PRESERVED (never dropped).
-    - Nested dicts are merged recursively.
-    """
-    result: dict[str, Any] = dict(user)  # Start with all user keys preserved
+
+def _find_missing_keys(example: dict[str, Any], user: dict[str, Any], prefix: str = "") -> list[str]:
+    """Return dotted key paths that exist in example but not in user."""
+    missing: list[str] = []
     for key, example_value in example.items():
-        if key in result:
-            user_value = result[key]
-            if isinstance(example_value, dict) and isinstance(user_value, dict):
-                result[key] = _deep_merge_structure(example_value, user_value)
-            # else: keep user's scalar value — don't overwrite
-        else:
-            # New key from example → add with example default
-            result[key] = example_value
-    return result
+        path = f"{prefix}.{key}" if prefix else key
+        if key not in user:
+            missing.append(path)
+        elif isinstance(example_value, dict) and isinstance(user.get(key), dict):
+            missing.extend(_find_missing_keys(example_value, user[key], path))
+    return missing
 
 
-def _toml_value(value: Any) -> str:
-    """Serialize a single TOML value."""
+def _serialize_value(value: Any) -> str:
+    """Serialize a TOML value for insertion into a file."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):
@@ -44,86 +40,95 @@ def _toml_value(value: Any) -> str:
     if isinstance(value, float):
         return repr(value)
     if isinstance(value, str):
-        # Escape backslashes and quotes
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')
         return f'"{escaped}"'
     if isinstance(value, list):
-        items = ", ".join(_toml_value(v) for v in value)
+        items = ", ".join(_serialize_value(v) for v in value)
         return f"[{items}]"
     return f'"{value}"'
 
 
-def _write_table(lines: list[str], key_path: str, data: dict[str, Any], indent: str = "") -> None:
-    """Append a [table] header and its key-value pairs to lines."""
-    # Separate simple values from nested tables
-    simple: dict[str, Any] = {}
-    nested: dict[str, dict[str, Any]] = {}
-    for k, v in data.items():
-        if isinstance(v, dict):
-            nested[k] = v
+def _append_missing_keys(
+    lines: list[str],
+    example: dict[str, Any],
+    user: dict[str, Any],
+    section_prefix: str = "",
+) -> int:
+    """Append missing keys from example to lines. Returns count of keys added."""
+    added = 0
+    simple_to_add: list[tuple[str, Any]] = []
+    nested_to_add: dict[str, dict[str, Any]] = {}
+
+    for key, example_value in example.items():
+        if key not in user:
+            if isinstance(example_value, dict):
+                nested_to_add[key] = example_value
+            else:
+                simple_to_add.append((key, example_value))
+        elif isinstance(example_value, dict) and isinstance(user.get(key), dict):
+            # Recurse into shared nested tables
+            sub_prefix = f"{section_prefix}.{key}" if section_prefix else key
+            # Find the existing [section] line or append
+            added += _append_missing_keys(lines, example_value, user[key], sub_prefix)
+
+    # Append simple keys to the right section
+    if simple_to_add:
+        section_header = f"[{section_prefix}]" if section_prefix else None
+        insert_pos = len(lines)
+
+        # Find the section header to append after its last key
+        if section_header:
+            in_section = False
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped == section_header:
+                    in_section = True
+                    continue
+                if in_section:
+                    # Check if we've left the section
+                    if stripped.startswith("[") and stripped.endswith("]"):
+                        insert_pos = i
+                        break
+                    # Check if this is a key-value line (not blank/comment)
+                    if stripped and not stripped.startswith("#"):
+                        insert_pos = i + 1
+            # If section not found, we'll append at end
         else:
-            simple[k] = v
+            # Top-level keys — insert before first [section]
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped.startswith("[") and stripped.endswith("]"):
+                    insert_pos = i
+                    break
 
-    if simple:
-        lines.append(f"\n[{key_path}]")
-        for k, v in simple.items():
-            lines.append(f"{k} = {_toml_value(v)}")
+        # Build insertion lines
+        insert_lines = []
+        for key, value in simple_to_add:
+            insert_lines.append(f"{key} = {_serialize_value(value)}")
+            added += 1
 
-    for k, v in nested.items():
-        _write_table(lines, f"{key_path}.{k}", v)
+        for i, insert_line in enumerate(insert_lines):
+            lines.insert(insert_pos + i, insert_line)
 
+    # Append new nested sections at the end
+    for key, nested_dict in nested_to_add.items():
+        full_section = f"{section_prefix}.{key}" if section_prefix else key
+        lines.append("")
+        lines.append(f"[{full_section}]")
+        for k, v in nested_dict.items():
+            if isinstance(v, dict):
+                # Sub-nested — will be handled as its own section
+                sub_full = f"{full_section}.{k}"
+                lines.append("")
+                lines.append(f"[{sub_full}]")
+                for sk, sv in v.items():
+                    lines.append(f"{sk} = {_serialize_value(sv)}")
+                    added += 1
+            else:
+                lines.append(f"{k} = {_serialize_value(v)}")
+                added += 1
 
-def _toml_dumps(data: dict[str, Any]) -> str:
-    """Serialize a nested dict to a TOML string."""
-    lines: list[str] = []
-
-    # Top-level simple keys
-    top_simple: dict[str, Any] = {}
-    top_tables: dict[str, dict[str, Any]] = {}
-    for k, v in data.items():
-        if isinstance(v, dict):
-            top_tables[k] = v
-        else:
-            top_simple[k] = v
-
-    for k, v in top_simple.items():
-        lines.append(f"{k} = {_toml_value(v)}")
-
-    for k, v in top_tables.items():
-        _write_table(lines, k, v)
-
-    return "\n".join(lines) + "\n"
-
-
-def _diff_keys(old: dict[str, Any], new: dict[str, Any], prefix: str = "") -> tuple[list[str], list[str]]:
-    """Return (added_keys, removed_keys) between two dicts."""
-    added: list[str] = []
-    removed: list[str] = []
-    old_keys = set(old.keys())
-    new_keys = set(new.keys())
-
-    for k in new_keys - old_keys:
-        path = f"{prefix}.{k}" if prefix else k
-        added.append(path)
-
-    for k in old_keys - new_keys:
-        path = f"{prefix}.{k}" if prefix else k
-        removed.append(path)
-
-    # Recurse into shared dict keys
-    for k in old_keys & new_keys:
-        old_v = old[k]
-        new_v = new[k]
-        if isinstance(old_v, dict) and isinstance(new_v, dict):
-            sub_added, sub_removed = _diff_keys(old_v, new_v, f"{prefix}.{k}" if prefix else k)
-            added.extend(sub_added)
-            removed.extend(sub_removed)
-
-    return added, removed
-
-
-def _banner(text: str) -> str:
-    return f"\n  {text}"
+    return added
 
 
 def update_sot_structure(
@@ -133,9 +138,11 @@ def update_sot_structure(
     dry_run: bool = False,
     quiet: bool = False,
 ) -> bool:
-    """Update sot.toml structure to match the example.
+    """Surgically add missing keys from example into sot.toml.
 
-    Returns True if changes were made (or would be made in dry_run mode).
+    Only appends keys that exist in example but not in user file.
+    Never overwrites user values, never removes user-only keys,
+    never rewrites the entire file (preserves comments and formatting).
     """
     if sys.version_info >= (3, 11):
         import tomllib
@@ -155,24 +162,17 @@ def update_sot_structure(
     user_raw = tomllib.loads(sot_path.read_text(encoding="utf-8"))
     example_raw = tomllib.loads(example_path.read_text(encoding="utf-8"))
 
-    merged = _deep_merge_structure(example_raw, user_raw)
+    missing = _find_missing_keys(example_raw, user_raw)
 
-    added, removed = _diff_keys(user_raw, merged)
-
-    if not added and not removed:
+    if not missing:
         if not quiet:
             print("  sot.toml is already up to date — nothing to do.")
         return False
 
     if not quiet:
-        if added:
-            print(_banner("Keys that will be ADDED (using example defaults):"))
-            for k in sorted(added):
-                print(f"    + {k}")
-        if removed:
-            print(_banner("Keys that will be REMOVED (no longer in example):"))
-            for k in sorted(removed):
-                print(f"    - {k}")
+        print(_banner("Keys that will be ADDED (using example defaults):"))
+        for k in sorted(missing):
+            print(f"    + {k}")
 
     if dry_run:
         if not quiet:
@@ -184,19 +184,15 @@ def update_sot_structure(
     backup_path = sot_path.with_suffix(f".toml.bak.{timestamp}")
     shutil.copy2(sot_path, backup_path)
 
-    # ── Write ──
-    header = (
-        "# ─────────────────────────────────────────────────────────────────────────────\n"
-        "#  sot-cli  —  Your personal configuration\n"
-        "# ─────────────────────────────────────────────────────────────────────────────\n"
-        "#  API keys live in `sot.keys.toml` (separate file, never committed).\n"
-        "#  Updated structure on " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n"
-        "# ─────────────────────────────────────────────────────────────────────────────\n"
-    )
-    sot_path.write_text(header + _toml_dumps(merged), encoding="utf-8")
+    # ── Surgically append missing keys ──
+    lines = sot_path.read_text(encoding="utf-8").split("\n")
+    keys_added = _append_missing_keys(lines, example_raw, user_raw)
+
+    if keys_added > 0:
+        sot_path.write_text("\n".join(lines), encoding="utf-8")
 
     if not quiet:
         print(_banner(f"Backup saved to {backup_path.name}"))
-        print(_banner("sot.toml updated."))
+        print(_banner(f"sot.toml updated — {keys_added} key(s) added surgically."))
 
-    return True
+    return keys_added > 0

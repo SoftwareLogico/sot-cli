@@ -208,7 +208,7 @@ def read_pdf(
         )
 
     text = _extract_pdf_text(path, page_range, password)
-    rendered_pages = _render_pdf_pages(path, page_range) if supports_images else []
+    rendered_pages = _render_pdf_pages(path, page_range)
 
     payload = {
         "type": "pdf",
@@ -236,14 +236,13 @@ def read_pdf(
     ]
     if text:
         supplemental_parts.append(_text_part(text))
-    if supports_images:
-        for rendered_page in rendered_pages:
-            supplemental_parts.append(
-                _text_part(f"PDF page {rendered_page['page_number']} rendered image.")
-            )
-            supplemental_parts.append(
-                _image_part(rendered_page["mime_type"], rendered_page["base64"])
-            )
+    for rendered_page in rendered_pages:
+        supplemental_parts.append(
+            _text_part(f"PDF page {rendered_page['page_number']} rendered image.")
+        )
+        supplemental_parts.append(
+            _image_part(rendered_page["mime_type"], rendered_page["base64"])
+        )
 
     return ToolPayload(
         payload=payload,
