@@ -1,6 +1,6 @@
 # sot-cli 🚀 Limitless Local AI Agent
 
-[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![Providers](https://img.shields.io/badge/Providers-OpenRouter%20%7C%20LMStudio%20%7C%20OpenAI%20%7C%20Ollama%20%7C%20NVIDIA-brightgreen.svg)](ARCHITECTURE.md)
 [![Stars](https://img.shields.io/github/stars/softwarelogico/sot-cli?style=social)](https://github.com/softwarelogico/sot-cli)
 [![License](https://img.shields.io/github/license/SoftwareLogico/sot-cli?style=flat&logo=mit)](LICENSE)
@@ -38,6 +38,7 @@ The name `sot-cli` is a direct nod to the architectural pattern it is built arou
 `sot-cli` includes 15 built-in browser tools powered by [browser-use](https://github.com/browser-use/browser-use). The agent can browse the web exactly like a human — navigate pages, click elements, type text, take screenshots, and manage tabs.
 
 **Supported profiles:**
+
 - `fresh` — clean Chromium session (default)
 - `Chrome` / `Brave` / `Edge` — your real browser profiles with cookies and extensions
 
@@ -64,13 +65,13 @@ cd sot-cli
 
 ```bash
 #uv
-uv venv <env_name> --python 3.11
+uv venv <env_name> --python 3.12
 source <env_name>/bin/activate
 uv pip install -e .
 uv run sot-cli
 
 #conda
-conda create -n <env_name> python=3.11
+conda create -n <env_name> python=3.12
 conda activate <env_name>
 pip install -e .
 sot-cli
