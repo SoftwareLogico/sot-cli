@@ -5,6 +5,12 @@ from typing import Any
 import os
 import sys
 
+# httpx-sse<0.4.4 references httpx.TransportError which was removed in httpx 0.28.x
+# Shim: alias TransportError -> HTTPError so httpx-sse can subclass it at import time
+import httpx
+if not hasattr(httpx, "TransportError"):
+    httpx.TransportError = httpx.HTTPError  # type: ignore[attr-defined]
+
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from sot_cli.config.app import MCPServerConfig
