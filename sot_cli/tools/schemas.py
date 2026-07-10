@@ -497,68 +497,67 @@ def _edit_files_schema() -> dict[str, Any]:
                 "description": (
                     "TEXT MODE. Exact text to replace. Must be unique in the file "
                     "unless replace_all=true or you supply before_context/"
-                    "after_context to disambiguate. Reserve old_string=\"\" for "
-                    "the file-creation special case (single-edit batch for that "
-                    "file against a non-existent path)."
+                    "after_context to disambiguate. old_string=\"\" is ONLY valid "
+                    "for creating a new file (single text-mode edit, file must not exist). "
+                    "Rejected on existing files."
                 ),
             },
             "before_context": {
                 "type": "string",
                 "description": (
-                    "TEXT MODE only. Exact text that must appear immediately "
+                    "TEXT MODE ONLY. Exact text that must appear immediately "
                     "before old_string for a candidate to be considered a match — "
                     "use this to pick the right occurrence without enlarging "
-                    "old_string."
+                    "old_string. Invalid in line-range or insert mode."
                 ),
             },
             "after_context": {
                 "type": "string",
                 "description": (
-                    "TEXT MODE only. Exact text that must appear immediately after "
-                    "old_string for a candidate to be considered a match."
+                    "TEXT MODE ONLY. Exact text that must appear immediately after "
+                    "old_string for a candidate to be considered a match. Invalid in line-range or insert mode."
                 ),
             },
             "replace_all": {
                 "type": "boolean",
                 "description": (
-                    "TEXT MODE only. When true, replace every occurrence of "
+                    "TEXT MODE ONLY. When true, replace every occurrence of "
                     "old_string (after context filtering) instead of requiring a "
-                    "single unique match."
+                    "single unique match. Invalid in line-range or insert mode."
                 ),
             },
             "start_line": {
                 "type": "integer",
                 "minimum": 1,
                 "description": (
-                    "LINE-RANGE MODE. 1-indexed first line of the block to replace "
-                    "or delete. Must be combined with end_line."
+                    "LINE-RANGE MODE. REQUIRED together with end_line. "
+                    "1-indexed first line of the block to replace or delete."
                 ),
             },
             "end_line": {
                 "type": "integer",
                 "minimum": 1,
                 "description": (
-                    "LINE-RANGE MODE. 1-indexed last line (inclusive) of the block "
-                    "to replace or delete. Must be >= start_line."
+                    "LINE-RANGE MODE. REQUIRED together with start_line. "
+                    "1-indexed last line (inclusive) of the block to replace or delete. Must be >= start_line."
                 ),
             },
             "insert_line": {
                 "type": "integer",
                 "minimum": 1,
                 "description": (
-                    "INSERT MODE. 1-indexed reference line. The insertion is "
-                    "zero-width and never modifies this line's contents — only "
-                    "the position before/after it."
+                    "INSERT MODE. REQUIRED together with position. "
+                    "1-indexed reference line. The insertion is zero-width and never modifies this line's contents."
                 ),
             },
             "position": {
                 "type": "string",
                 "enum": ["before", "after"],
                 "description": (
-                    "INSERT MODE. \"before\" places new_string just before the "
-                    "line at insert_line; \"after\" places it just after. Use "
-                    "insert_line=N, position=\"after\" with N=last line to append "
-                    "at end of file."
+                    "INSERT MODE. REQUIRED together with insert_line. "
+                    "\"before\" places new_string just before the line at insert_line; "
+                    "\"after\" places it just after. Use insert_line=N, position=\"after\" "
+                    "with N=last line to append at end of file."
                 ),
             },
         },
