@@ -253,7 +253,25 @@ def _translate_tools_to_converse(openai_tools: list[dict[str, Any]]) -> dict[str
 
 
 def _infer_context_length(model: str) -> int:
+    """Infer context length from model name. Falls back to 1M for unknown models."""
     m = model.lower()
+    if "claude" in m:
+        if "fable" in m or "opus" in m or "3-7" in m:
+            return 200_000
+        if "sonnet" in m:
+            return 200_000
+        if "haiku" in m:
+            return 200_000
+    if "llama" in m or "mistral" in m:
+        return 128_000
+    if "deepseek" in m or "qwen" in m:
+        return 128_000
+    if "grok" in m or "nova" in m:
+        return 1_000_000
+    if "kimi" in m or "glm" in m:
+        return 128_000
+    if "titan" in m:
+        return 8_000
     return 1_000_000
 
 

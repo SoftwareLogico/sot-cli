@@ -32,7 +32,7 @@ def _read_default_config_template() -> str:
 
 
 DEFAULT_CONFIG_TEMPLATE = _read_default_config_template()
-KNOWN_PROVIDERS: tuple[ProviderName, ...] = ("lmstudio", "openrouter", "openai", "xai", "ollama", "nvidia", "bedrock")
+KNOWN_PROVIDERS: tuple[ProviderName, ...] = ("lmstudio", "openrouter", "openai", "ollama", "nvidia", "bedrock")
 
 
 class ConfigError(ValueError):
