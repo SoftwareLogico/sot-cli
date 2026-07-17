@@ -1,7 +1,7 @@
 # sot-cli 🚀 Limitless Local AI Agent
 
-[![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
-[![Providers](https://img.shields.io/badge/Providers-OpenRouter%20%7C%20LMStudio%20%7C%20OpenAI%20%7C%20Ollama%20%7C%20NVIDIA-brightgreen.svg)](ARCHITECTURE.md)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Providers](https://img.shields.io/badge/Providers-OpenRouter%20%7C%20LMStudio%20%7C%20OpenAI%20%7C%20Ollama%20%7C%20NVIDIA%20%7C%20Bedrock-brightgreen.svg)](ARCHITECTURE.md)
 [![Stars](https://img.shields.io/github/stars/softwarelogico/sot-cli?style=social)](https://github.com/softwarelogico/sot-cli)
 [![License](https://img.shields.io/github/license/SoftwareLogico/sot-cli?style=flat&logo=mit)](LICENSE)
 
@@ -49,7 +49,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#browser-tools) for the full browser tool r
 ## Platform Compatibility
 
 - ✅ **macOS**: Fully tested and compatible.
-- ✅ **Windows**: Fully tested and compatible.
+- ✅ **Windows**: Fully tested and compatible. Use `cmd` or PowerShell (not WSL). For venv activation: `.venv\Scripts\activate` instead of `source .../bin/activate`.
 - ✅ **Linux**: Fully tested and compatible.
 
 ### Clone the repo
@@ -63,39 +63,58 @@ cd sot-cli
 
 ### Create and activate a virtual environment (Optional but recommended)
 
-```bash
-#uv
-uv venv <env_name> --python 3.12
-source <env_name>/bin/activate
-uv pip install -e .
-uv run sot-cli
+Choose **one** of the following methods:
 
-#conda
-conda create -n <env_name> python=3.12
+**Option 1: uv (recommended)**
+```bash
+# Create venv with Python 3.11+
+uv venv <env_name> --python 3.11
+
+# Activate:
+# macOS/Linux:
+source <env_name>/bin/activate
+# Windows (cmd):
+<env_name>\Scripts\activate
+# Windows (PowerShell):
+<env_name>\Scripts\Activate.ps1
+
+# Install and run
+uv pip install -e .
+sot-cli
+```
+
+**Option 2: conda**
+```bash
+conda create -n <env_name> python=3.11
 conda activate <env_name>
 pip install -e .
 sot-cli
+```
 
-#venv
+**Option 3: venv (built-in)**
+```bash
+# Create venv:
+# macOS/Linux:
 python3 -m venv <env_name>
+# Windows:
+python -m venv <env_name>
+
+# Activate:
+# macOS/Linux:
 source <env_name>/bin/activate
+# Windows (cmd):
+<env_name>\Scripts\activate
+# Windows (PowerShell):
+<env_name>\Scripts\Activate.ps1
+
+# Install and run
 pip install -e .
-sot-cli
-```
-
-### Install dependencies
-
-```bash
-pip install -e .
-```
-
-### Run sot-cli
-
-```bash
 sot-cli
 ```
 
 ### Running without an environment manager
+
+If you prefer not to use a virtual environment:
 
 ```bash
 pip install --user -e .
@@ -230,10 +249,10 @@ For full per-provider field semantics (including OpenAI-specific quirks like `ma
 sot-cli
 
 # Or override the provider explicitly
-sot-cli --provider [openrouter/lmstudio/openai/ollama/nvidia]
+sot-cli --provider [openrouter/lmstudio/openai/ollama/nvidia/bedrock]
 # e.g. sot-cli --provider openai
 
-sot-cli --provider [openrouter/lmstudio/openai/ollama/nvidia] --model modelName
+sot-cli --provider [openrouter/lmstudio/openai/ollama/nvidia/bedrock] --model modelName
 # Start a session (3 equivalent forms)
 sot-cli
 sot-cli prompt

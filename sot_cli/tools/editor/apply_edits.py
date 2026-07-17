@@ -52,7 +52,133 @@ from sot_cli.utils.text import _count_lines
 
 
 class _EditValidationError(ValueError):
-    pass
+    """Validation error with self-explanatory message.
+
+    Includes:
+    - Clear description of the problem
+    - Correct usage example
+    - Possible causes and solutions
+    """
+    def __init__(self, message: str, context: dict | None = None):
+        self.context = context or {}
+        full_message = self._build_helpful_message(message, self.context)
+        super().__init__(full_message)
+        self.original_message = message
+
+    def _build_helpful_message(self, error_msg: str, context: dict) -> str:
+        """Build an error message with embedded help."""
+        parts = [f"\n{'='*70}", f"❌ ERROR: {error_msg}", '='*70]
+
+        # Add context-specific help based on error type
+        if "old_string" in error_msg.lower() and "not found" in error_msg.lower():
+            parts.extend([
+                "\n💡 WHAT DOES THIS MEAN?",
+                "   The text you're trying to replace (old_string) was not found in the file.",
+                "\n🔍 POSSIBLE CAUSES:",
+                "   1. The text has different spaces/tabs than the actual file",
+                "   2. The text was already modified by a previous edit",
+                "   3. You copied text from the SoT including line numbers (e.g. '   123|')",
+                "   4. The file has different line endings (CRLF vs LF)",
+                "\n✅ HOW TO FIX:",
+                "   - Check the EXACT text in the file (use read_files if needed)",
+                "   - Use before_context/after_context to make the match more specific",
+                "   - Use replace_all=true to replace ALL occurrences",
+                "   - Use start_line/end_line instead of old_string for line targeting",
+                "\n📖 CORRECT EXAMPLE:",
+                '   {"old_string": "exact text to find", "new_string": "new text"}',
+                '   {"old_string": "text", "new_string": "new", "before_context": "previous line"}',
+                '   {"start_line": 10, "end_line": 15, "new_string": "new block"}',
+            ])
+
+        elif "multiple locations" in error_msg.lower() or "matched multiple" in error_msg.lower():
+            parts.extend([
+                "\n💡 WHAT DOES THIS MEAN?",
+                "   The text you're trying to replace appears MORE THAN ONCE in the file.",
+                "   edit_files doesn't know which one to replace.",
+                "\n✅ HOW TO FIX:",
+                "   Option 1: Use replace_all=true to replace ALL occurrences",
+                '      {"old_string": "text", "new_string": "new", "replace_all": true}',
+                "\n   Option 2: Use before_context/after_context to make the match unique",
+                '      {"old_string": "text", "new_string": "new", "before_context": "line before"}',
+                "\n   Option 3: Use start_line/end_line for precise line number targeting",
+                '      {"start_line": 10, "end_line": 12, "new_string": "new block"}',
+            ])
+
+        elif "mix" in error_msg.lower() and "targeting mode" in error_msg.lower():
+            parts.extend([
+                "\n💡 WHAT DOES THIS MEAN?",
+                "   You're mixing targeting modes in the same edit.",
+                "   Each edit must use EXACTLY ONE of these modes:",
+                "\n📖 AVAILABLE MODES (pick ONLY ONE):",
+                "   1. TEXT MODE: old_string + new_string",
+                '      {"old_string": "find", "new_string": "replace"}',
+                "\n   2. LINE-RANGE MODE: start_line + end_line + new_string",
+                '      {"start_line": 10, "end_line": 15, "new_string": "new block"}',
+                "\n   3. INSERT MODE: insert_line + position + new_string",
+                '      {"insert_line": 10, "position": "after", "new_string": "text to insert"}',
+                "\n❌ INCORRECT EXAMPLE (mixed modes):",
+                '      {"old_string": "x", "start_line": 10, "new_string": "y"} ← NO',
+            ])
+
+        elif "overlap" in error_msg.lower():
+            parts.extend([
+                "\n💡 WHAT DOES THIS MEAN?",
+                "   Two edits in the same file attempt to modify the same text range.",
+                "   Edits must be independent and non-overlapping.",
+                "\n✅ HOW TO FIX:",
+                "   Option 1: Combine overlapping edits into a SINGLE edit",
+                "   Option 2: Adjust ranges so they don't overlap",
+                "   Option 3: If they're adjacent inserts, merge them into one",
+                "\n📖 EXAMPLE:",
+                "   ❌ WRONG: edit1 modifies lines 10-15, edit2 modifies lines 12-18",
+                "   ✅ CORRECT: edit1 modifies lines 10-18 (combined)",
+            ])
+
+        elif "edits must be a non-empty array" in error_msg.lower():
+            parts.extend([
+                "\n💡 WHAT DOES THIS MEAN?",
+                "   The 'edits' parameter must be an array with at least ONE edit.",
+                "\n📖 CORRECT STRUCTURE:",
+                '   {"path": "/path/to/file.md", "edits": [{...}]}',
+                "\n📖 COMPLETE EXAMPLE:",
+                '   edit_files({',
+                '     "files": [{',
+                '       "path": "/path/to/file.md",',
+                '       "edits": [{',
+                '         "old_string": "text to find",',
+                '         "new_string": "new text"',
+                '       }]',
+                '     }]',
+                '   })',
+            ])
+
+        elif "must be a positive integer" in error_msg.lower():
+            parts.extend([
+                "\n💡 WHAT DOES THIS MEAN?",
+                "   Line numbers must be positive integers (1, 2, 3, ...)",
+                "   You CANNOT use 0, negatives, or text.",
+                "\n📖 EXAMPLES:",
+                '   ✅ CORRECT: {"start_line": 10, "end_line": 15}',
+                '   ❌ WRONG: {"start_line": 0, "end_line": -1}',
+                '   ❌ WRONG: {"start_line": "10", "end_line": "15"} ← must be numbers, not strings',
+            ])
+
+        # Add general context if available
+        if context:
+            parts.extend(["\n📍 ERROR CONTEXT:"])
+            for key, value in context.items():
+                parts.append(f"   {key}: {value}")
+
+        parts.extend([
+            "\n" + "="*70,
+            "💬 If the problem persists, check:",
+            "   1. That the file exists and is readable",
+            "   2. That the edits have the correct structure",
+            "   3. That the target text exists EXACTLY in the file",
+            "="*70 + "\n"
+        ])
+
+        return "\n".join(parts)
 
 
 # ─── primitive validators ────────────────────────────────────────────────
@@ -103,12 +229,25 @@ def _require_edits(arguments: dict[str, Any]) -> list[dict[str, Any]]:
     """
     raw_edits = arguments.get("edits")
     if not isinstance(raw_edits, list) or not raw_edits:
-        raise _EditValidationError("edits must be a non-empty array")
+        raise _EditValidationError(
+            "edits must be a non-empty array",
+            context={
+                "received": type(raw_edits).__name__ if raw_edits is not None else "None",
+                "expected": "list with at least one edit object",
+            }
+        )
 
     normalized_edits: list[dict[str, Any]] = []
     for index, item in enumerate(raw_edits, start=1):
         if not isinstance(item, dict):
-            raise _EditValidationError(f"edits[{index}] must be an object")
+            raise _EditValidationError(
+                f"edits[{index}] must be an object",
+                context={
+                    "received": type(item).__name__,
+                    "expected": "dict with edit parameters",
+                    "example": '{"old_string": "text", "new_string": "replacement"}',
+                }
+            )
 
         new_string = _require_string_allow_empty(item, "new_string")
 
@@ -130,12 +269,22 @@ def _require_edits(arguments: dict[str, Any]) -> list[dict[str, Any]]:
         if modes_picked == 0:
             raise _EditValidationError(
                 f"edits[{index}] must target text (old_string), a line range "
-                f"(start_line/end_line), or an insert position (insert_line/position)"
+                f"(start_line/end_line), or an insert position (insert_line/position)",
+                context={
+                    "received_keys": list(item.keys()),
+                    "hint": "You must specify ONE of: old_string, start_line/end_line, or insert_line/position",
+                }
             )
         if modes_picked > 1:
             raise _EditValidationError(
                 f"edits[{index}] mixes targeting modes — pick exactly one of: "
-                f"old_string OR start_line/end_line OR insert_line/position"
+                f"old_string OR start_line/end_line OR insert_line/position",
+                context={
+                    "received_keys": list(item.keys()),
+                    "text_mode": "old_string + new_string",
+                    "line_range_mode": "start_line + end_line + new_string",
+                    "insert_mode": "insert_line + position + new_string",
+                }
             )
 
         if has_text:
@@ -146,11 +295,17 @@ def _require_edits(arguments: dict[str, Any]) -> list[dict[str, Any]]:
             if before_context is not None or after_context is not None:
                 if old_string == "":
                     raise _EditValidationError(
-                        f"edits[{index}] cannot use before_context/after_context with empty old_string"
+                        f"edits[{index}] cannot use before_context/after_context with empty old_string",
+                        context={
+                            "hint": "before_context/after_context are only for non-empty old_string",
+                        }
                     )
             if replace_all and old_string == "":
                 raise _EditValidationError(
-                    f"edits[{index}] cannot use replace_all with empty old_string"
+                    f"edits[{index}] cannot use replace_all with empty old_string",
+                    context={
+                        "hint": "replace_all is only for non-empty old_string",
+                    }
                 )
             normalized_edits.append({
                 "index": index,
@@ -166,19 +321,35 @@ def _require_edits(arguments: dict[str, Any]) -> list[dict[str, Any]]:
         if has_line_range:
             if start_line is None or end_line is None:
                 raise _EditValidationError(
-                    f"edits[{index}] requires both start_line and end_line when targeting lines"
+                    f"edits[{index}] requires both start_line and end_line when targeting lines",
+                    context={
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "hint": "Both start_line and end_line are required for line-range mode",
+                    }
                 )
             if end_line < start_line:
                 raise _EditValidationError(
-                    f"edits[{index}].end_line must be greater than or equal to start_line"
+                    f"edits[{index}].end_line must be greater than or equal to start_line",
+                    context={
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "hint": "end_line must be >= start_line",
+                    }
                 )
             if before_context is not None or after_context is not None:
                 raise _EditValidationError(
-                    f"edits[{index}] cannot use before_context/after_context with line targeting"
+                    f"edits[{index}] cannot use before_context/after_context with line targeting",
+                    context={
+                        "hint": "before_context/after_context are only for text mode (old_string)",
+                    }
                 )
             if replace_all:
                 raise _EditValidationError(
-                    f"edits[{index}] cannot use replace_all with line targeting"
+                    f"edits[{index}] cannot use replace_all with line targeting",
+                    context={
+                        "hint": "replace_all is only for text mode (old_string)",
+                    }
                 )
             normalized_edits.append({
                 "index": index,
@@ -192,23 +363,39 @@ def _require_edits(arguments: dict[str, Any]) -> list[dict[str, Any]]:
         # has_insert
         if insert_line is None:
             raise _EditValidationError(
-                f"edits[{index}].insert_line is required when targeting insert position"
+                f"edits[{index}].insert_line is required when targeting insert position",
+                context={
+                    "hint": "insert_line is required for insert mode",
+                }
             )
         if position not in {"before", "after"}:
             raise _EditValidationError(
-                f"edits[{index}].position must be exactly 'before' or 'after'"
+                f"edits[{index}].position must be exactly 'before' or 'after'",
+                context={
+                    "received": position,
+                    "expected": "'before' or 'after'",
+                }
             )
         if before_context is not None or after_context is not None:
             raise _EditValidationError(
-                f"edits[{index}] cannot use before_context/after_context with insert mode"
+                f"edits[{index}] cannot use before_context/after_context with insert mode",
+                context={
+                    "hint": "before_context/after_context are only for text mode (old_string)",
+                }
             )
         if replace_all:
             raise _EditValidationError(
-                f"edits[{index}] cannot use replace_all with insert mode"
+                f"edits[{index}] cannot use replace_all with insert mode",
+                context={
+                    "hint": "replace_all is only for text mode (old_string)",
+                }
             )
         if new_string == "":
             raise _EditValidationError(
-                f"edits[{index}] insert with empty new_string would be a no-op; remove it"
+                f"edits[{index}] insert with empty new_string would be a no-op; remove it",
+                context={
+                    "hint": "Insert mode requires non-empty new_string",
+                }
             )
         normalized_edits.append({
             "index": index,
@@ -420,7 +607,7 @@ _LINE_NUMBER_PREFIX_RE = re.compile(r'^[ \t]*\d+\|')
 
 
 def _strip_line_number_prefix(text: str) -> str | None:
-    """Strip SoT line-number prefixes from text. Returns None if no prefix detected.
+    r"""Strip SoT line-number prefixes from text. Returns None if no prefix detected.
 
     Only strips prefixes that match `^[ \t]*\d+\|` at the START of each line.
     Mid-line patterns like `|256|` are left untouched (they're content).
@@ -789,22 +976,35 @@ def execute_edit_files(arguments: dict[str, Any], root_dir: Path) -> dict[str, A
                 "error": str(exc),
             })
         except FileNotFoundError as exc:
+            error_msg = str(exc)
+            helpful_error = f"\n{'='*70}\n❌ FileNotFoundError: {error_msg}\n{'='*70}\n\n💡 WHAT DOES THIS MEAN?\n   The file does not exist at the specified path.\n\n🔍 POSSIBLE CAUSES:\n   1. The path is misspelled (check case sensitivity)\n   2. The file was deleted or moved\n   3. You're trying to create a new file but didn't use old_string=\"\"\n\n✅ HOW TO FIX:\n   - To EDIT an existing file: verify the path with list_dir\n   - To CREATE a new file: use old_string=\"\" with the full content\n   - Creation example:\n     edit_files({{\n       \"files\": [{{\n         \"path\": \"/path/to/new_file.md\",\n         \"edits\": [{{\n           \"old_string\": \"\",\n           \"new_string\": \"# File content\"\n         }}]\n       }}]\n     }})\n\n{'='*70}\n"
             results.append({
                 "ok": False,
                 "path": path_for_report,
-                "error": f"FileNotFoundError: {exc}",
+                "error": helpful_error,
             })
         except IsADirectoryError as exc:
+            error_msg = str(exc)
+            helpful_error = f"\n{'='*70}\n❌ IsADirectoryError: {error_msg}\n{'='*70}\n\n💡 WHAT DOES THIS MEAN?\n   The path points to a DIRECTORY, not a file.\n\n✅ HOW TO FIX:\n   - Make sure the path includes the full filename\n   - Wrong: /path/to/directory\n   - Right: /path/to/directory/file.md\n\n{'='*70}\n"
             results.append({
                 "ok": False,
                 "path": path_for_report,
-                "error": f"IsADirectoryError: {exc}",
+                "error": helpful_error,
             })
         except (UnicodeDecodeError, OSError, ValueError) as exc:
+            error_msg = str(exc)
+            helpful_error = f"\n{'='*70}\n❌ {type(exc).__name__}: {error_msg}\n{'='*70}\n\n💡 WHAT DOES THIS MEAN?"
+            if isinstance(exc, UnicodeDecodeError):
+                helpful_error += "\n   The file is not valid UTF-8 text (likely binary).\n\n✅ HOW TO FIX:\n   - Use write_file for full binary file replacement\n   - Or use run_command for binary manipulation\n"
+            elif isinstance(exc, ValueError):
+                helpful_error += "\n   Invalid value in parameters.\n\n✅ HOW TO FIX:\n   - Check that parameters have the correct type\n   - start_line/end_line must be positive integers\n   - position must be 'before' or 'after'\n"
+            else:
+                helpful_error += f"\n   System error: {error_msg}\n"
+            helpful_error += f"\n{'='*70}\n"
             results.append({
                 "ok": False,
                 "path": path_for_report,
-                "error": f"{type(exc).__name__}: {exc}",
+                "error": helpful_error,
             })
 
     succeeded = sum(1 for r in results if r.get("ok"))

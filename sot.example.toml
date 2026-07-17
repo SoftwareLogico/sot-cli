@@ -172,7 +172,9 @@ max_output_tokens = 32768
 reasoning_effort = "high"
 
 # ── Amazon Bedrock ──────────────────────────────────────────────────
-#  AWS Bedrock via Converse API (native, with thinking/reasoning support).
+#  AWS Bedrock via Mantle (OpenAI-compatible). To use the native
+#  Converse API (boto3), comment out base_url below and set
+#  region/model/thinking_type instead.
 [providers.bedrock]
 base_url = "https://bedrock-mantle.us-east-1.api.aws/openai/v1"
 region = "us-east-1"

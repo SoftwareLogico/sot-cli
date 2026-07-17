@@ -22,7 +22,6 @@ class SoTState:
     tracked_file_mtimes: dict[str, int] = field(default_factory=dict)
     session_source_entries: list[SourceEntry] = field(default_factory=list)
     tracked_file_estimated_tokens: dict[str, int | None] = field(default_factory=dict)
-    session_source_entries: list[SourceEntry] = field(default_factory=list)
     session_tracked_file_paths: set[str] = field(default_factory=set)
     session_tracked_media_paths: set[str] = field(default_factory=set)
 

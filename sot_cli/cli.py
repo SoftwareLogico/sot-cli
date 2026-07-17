@@ -11,10 +11,7 @@ import signal
 import sys
 import time
 
-if sys.version_info >= (3, 11):
-    import tomllib  # pyright: ignore[reportMissingImports]
-else:
-    import tomli as tomllib  # pyright: ignore[reportMissingImports]
+import tomllib  # pyright: ignore[reportMissingImports]
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
@@ -1127,7 +1124,6 @@ def _build_parser() -> ArgumentParser:
 Examples:
   sot-cli                         Start a new interactive session
   sot-cli --prompt                Same as above (explicit)
-  sot-cli "write tests"           New session with initial prompt
   sot-cli --session SESSION_ID    Resume session by ID
   sot-cli --session SESSION_ID --hypercompress  Compress history before resume
   sot-cli --list_sessions         List all sessions as JSON
@@ -1141,7 +1137,7 @@ Examples:
   sot-cli --run_task agent_1 "find the bug"
 """,
     )
-    _PROVIDER_CHOICES = ["lmstudio", "openrouter", "openai", "xai", "ollama", "nvidia", "bedrock"]
+    _PROVIDER_CHOICES = ["lmstudio", "openrouter", "openai", "ollama", "nvidia", "bedrock"]
 
     # ── Global options ──
     parser.add_argument("--config", default=None, help="Path to sot.toml")

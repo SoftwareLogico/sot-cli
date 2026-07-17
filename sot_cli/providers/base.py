@@ -16,7 +16,7 @@ class ProviderCapability:
     supports_video: bool = False
     # Model metadata populated by provider API detection
     context_length: int | None = None
-    allocated_context_length: int | None = None  # <--- AÑADIR ESTA LÍNEA
+    allocated_context_length: int | None = None
     max_completion_tokens: int | None = None
     modality: str = ""  # e.g. "text+image->text"
     quantization: str = ""  # e.g. "Q8_0" (lmstudio)

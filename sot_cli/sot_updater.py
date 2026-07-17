@@ -144,10 +144,7 @@ def update_sot_structure(
     Never overwrites user values, never removes user-only keys,
     never rewrites the entire file (preserves comments and formatting).
     """
-    if sys.version_info >= (3, 11):
-        import tomllib
-    else:
-        import tomli as tomllib
+    import tomllib
 
     if not sot_path.exists():
         if not quiet:
