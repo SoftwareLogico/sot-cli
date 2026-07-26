@@ -1,8 +1,8 @@
 """
-Browser tools for sot-cli — Powered by browser-use 0.1.48 (Playwright-based).
+Browser tools for sot-cli — Powered by browser-use 0.12.5 (Playwright-based).
 
 sot-cli is the brain. browser-use is just the hands and eyes.
-Uses Playwright directly via browser-use's get_playwright_browser().
+Uses Browser + BrowserConfig + BrowserContext + Playwright pages.
 """
 from __future__ import annotations
 
@@ -56,48 +56,50 @@ def _run_async(coro):
 
 
 # Global state
-_browser_instance = None  # browser_use.Browser
-_playwright_browser = None  # playwright.async_api.Browser
+_browser: Any = None  # browser_use.Browser (0.12.x)
+_context: Any = None  # browser_use.BrowserContext
 
 
 async def _get_page():
-    """Get the active Playwright Page from the browser."""
-    global _playwright_browser
-    if not _playwright_browser:
+    """Get the current Playwright Page from the BrowserContext."""
+    if not _context:
         return None
-    contexts = _playwright_browser.contexts
-    if not contexts:
-        context = await _playwright_browser.new_context()
-        return await context.new_page()
-    pages = contexts[0].pages
-    if not pages:
-        return await contexts[0].new_page()
-    return pages[0]
+    try:
+        return await _context.get_current_page()
+    except Exception:
+        return None
 
 
+# ──────────────────────────────────────────────────────
+# browser_open
+# ──────────────────────────────────────────────────────
 def execute_browser_open(arguments: dict[str, Any]) -> dict[str, Any]:
     profile = arguments.get("profile", "fresh")
     url = arguments.get("url", "")
     logger.info(f"browser_open called: profile={profile!r} url={url!r}")
 
     async def _open():
-        global _browser_instance, _playwright_browser
+        global _browser, _context
 
-        # Close existing browser
-        if _browser_instance is not None:
+        # Close existing context/browser
+        if _context is not None:
             try:
-                await _browser_instance.close()
+                await _context.close()
             except Exception:
                 pass
-            _browser_instance = None
-            _playwright_browser = None
+            _context = None
+        if _browser is not None:
+            try:
+                await _browser.close()
+            except Exception:
+                pass
+            _browser = None
 
-        from browser_use import Browser
-        from browser_use.browser.browser import BrowserConfig
+        from browser_use import Browser, BrowserConfig
 
-        if profile == "fresh":
-            config = BrowserConfig(headless=False)
-        else:
+        extra_args: list[str] = []
+
+        if profile != "fresh":
             from sot_cli.tools.browser.profiles import list_browser_profiles
 
             profiles = list_browser_profiles()
@@ -116,42 +118,43 @@ def execute_browser_open(arguments: dict[str, Any]) -> dict[str, Any]:
             profile_dir = matched["profile_dir"]
 
             logger.info(
-                f"Launching Chrome: {matched['browser']}/{profile_dir} from {chrome_path}"
+                f"Launching {matched['browser']}/{profile_dir} from {chrome_path}"
             )
+
+            extra_args.append(f"--user-data-dir={user_data}")
+            extra_args.append(f"--profile-directory={profile_dir}")
 
             config = BrowserConfig(
                 headless=False,
                 browser_binary_path=chrome_path,
-                extra_browser_args=[
-                    f"--user-data-dir={user_data}",
-                    f"--profile-directory={profile_dir}",
-                ],
+                extra_browser_args=extra_args,
+            )
+        else:
+            config = BrowserConfig(
+                headless=False,
             )
 
-        _browser_instance = Browser(config=config)
-        _playwright_browser = await _browser_instance.get_playwright_browser()
+        _browser = Browser(config=config)
+
+        # browser-use 0.12.5: launch the process + create a Playwright context
+        pw = await _browser.get_playwright_browser()
+        _context = await _browser.new_context()
 
         page = await _get_page()
         if page is None:
             raise RuntimeError("Browser opened but could not get a page.")
 
-        # Navigation is best-effort — some browsers (Brave shields, etc.)
-        # intercept redirects and throw ERR_ABORTED. Let the LLM handle
-        # navigation separately via browser_navigate.
+        # Navigation — best-effort (Brave shields, etc. may throw)
         if url:
             try:
-                await page.goto(url, wait_until="commit", timeout=30000)
-                try:
-                    await page.wait_for_load_state("domcontentloaded", timeout=10000)
-                except Exception:
-                    pass
+                await page.goto(url)
+                await page.wait_for_load_state()
             except Exception:
-                # goto failed (Brave shields, network issue, redirect abort)
-                # Just return whatever state the page is in.
                 pass
 
         title = await page.title()
-        return {"title": title, "url": page.url}
+        page_url = page.url
+        return {"title": title, "url": page_url}
 
     try:
         result = _run_async(_open())
@@ -161,6 +164,9 @@ def execute_browser_open(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_navigate
+# ──────────────────────────────────────────────────────
 def execute_browser_navigate(arguments: dict[str, Any]) -> dict[str, Any]:
     url = arguments.get("url", "").strip()
     if not url:
@@ -170,8 +176,11 @@ def execute_browser_navigate(arguments: dict[str, Any]) -> dict[str, Any]:
         page = await _get_page()
         if not page:
             return None
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        return {"title": await page.title(), "url": page.url}
+        await page.goto(url)
+        await page.wait_for_load_state()
+        title = await page.title()
+        page_url = page.url
+        return {"title": title, "url": page_url}
 
     try:
         result = _run_async(_nav())
@@ -182,6 +191,9 @@ def execute_browser_navigate(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_screenshot
+# ──────────────────────────────────────────────────────
 def execute_browser_screenshot(arguments: dict[str, Any]) -> dict[str, Any]:
     full_page = arguments.get("full_page", False)
 
@@ -189,20 +201,18 @@ def execute_browser_screenshot(arguments: dict[str, Any]) -> dict[str, Any]:
         page = await _get_page()
         if not page:
             return None
-        img_bytes = await page.screenshot(full_page=full_page)
-        # Save to temp file instead of returning base64 inline
-        import os
+        screenshot_bytes = await page.screenshot(full_page=full_page, animations="disabled")
         path = "/tmp/sot_browser_screenshot.png"
         with open(path, "wb") as f:
-            f.write(img_bytes)
+            f.write(screenshot_bytes)
         title = await page.title()
-        url = page.url
-        logger.info(f"Screenshot saved: {path} ({len(img_bytes)} bytes)")
+        page_url = page.url
+        logger.info(f"Screenshot saved: {path} ({len(screenshot_bytes)} bytes)")
         return {
             "title": title,
-            "url": url,
+            "url": page_url,
             "screenshot_path": path,
-            "size_bytes": len(img_bytes),
+            "size_bytes": len(screenshot_bytes),
         }
 
     try:
@@ -214,6 +224,9 @@ def execute_browser_screenshot(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_click
+# ──────────────────────────────────────────────────────
 def execute_browser_click(arguments: dict[str, Any]) -> dict[str, Any]:
     x = arguments.get("x")
     y = arguments.get("y")
@@ -226,9 +239,11 @@ def execute_browser_click(arguments: dict[str, Any]) -> dict[str, Any]:
             return None
         await page.mouse.click(x, y)
         await asyncio.sleep(0.5)
+        title = await page.title()
+        page_url = page.url
         return {
-            "title": await page.title(),
-            "url": page.url,
+            "title": title,
+            "url": page_url,
             "clicked": {"x": x, "y": y},
         }
 
@@ -241,6 +256,9 @@ def execute_browser_click(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_type
+# ──────────────────────────────────────────────────────
 def execute_browser_type(arguments: dict[str, Any]) -> dict[str, Any]:
     text = arguments.get("text", "")
     press_enter = arguments.get("press_enter", False)
@@ -251,6 +269,7 @@ def execute_browser_type(arguments: dict[str, Any]) -> dict[str, Any]:
         page = await _get_page()
         if not page:
             return None
+        # Playwright keyboard.type with 50ms delay between keystrokes
         await page.keyboard.type(text, delay=50)
         if press_enter:
             await page.keyboard.press("Enter")
@@ -266,6 +285,9 @@ def execute_browser_type(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_key
+# ──────────────────────────────────────────────────────
 def execute_browser_key(arguments: dict[str, Any]) -> dict[str, Any]:
     key = arguments.get("key", "")
     if not key:
@@ -287,20 +309,26 @@ def execute_browser_key(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_scroll
+# ──────────────────────────────────────────────────────
 def execute_browser_scroll(arguments: dict[str, Any]) -> dict[str, Any]:
     direction = arguments.get("direction", "down")
     amount = arguments.get("amount", 500)
-    delta = amount if direction == "down" else -amount
 
     async def _scroll():
         page = await _get_page()
         if not page:
             return None
-        await page.mouse.wheel(0, delta)
+        delta = amount if direction == "down" else -amount
+        # Playwright mouse.wheel(delta_y=...)
+        await page.mouse.wheel(delta_y=delta)
         await asyncio.sleep(0.3)
+        title = await page.title()
+        page_url = page.url
         return {
-            "title": await page.title(),
-            "url": page.url,
+            "title": title,
+            "url": page_url,
             "scrolled": {"direction": direction, "amount": amount},
         }
 
@@ -313,6 +341,9 @@ def execute_browser_scroll(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_get_html
+# ──────────────────────────────────────────────────────
 def execute_browser_get_html(arguments: dict[str, Any]) -> dict[str, Any]:
     max_length = arguments.get("max_length", 5000)
 
@@ -320,11 +351,13 @@ def execute_browser_get_html(arguments: dict[str, Any]) -> dict[str, Any]:
         page = await _get_page()
         if not page:
             return None
-        content = await page.content()
+        content = await page.evaluate("() => document.documentElement.outerHTML")
         truncated = content[:max_length] if len(content) > max_length else content
+        title = await page.title()
+        page_url = page.url
         return {
-            "title": await page.title(),
-            "url": page.url,
+            "title": title,
+            "url": page_url,
             "html": truncated,
             "total_length": len(content),
         }
@@ -338,6 +371,9 @@ def execute_browser_get_html(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_get_text
+# ──────────────────────────────────────────────────────
 def execute_browser_get_text(arguments: dict[str, Any]) -> dict[str, Any]:
     max_length = arguments.get("max_length", 50000)
 
@@ -347,14 +383,16 @@ def execute_browser_get_text(arguments: dict[str, Any]) -> dict[str, Any]:
             return None
         content = await page.evaluate("() => document.body.innerText")
 
-        # Guardar el texto completo en un archivo (similar a screenshot)
+        # Save full text to file
         text_path = "/tmp/sot_browser_get_text.txt"
         with open(text_path, "w", encoding="utf-8") as f:
             f.write(content)
 
+        title = await page.title()
+        page_url = page.url
         return {
-            "title": await page.title(),
-            "url": page.url,
+            "title": title,
+            "url": page_url,
             "text_file_path": text_path,
             "total_length": len(content),
         }
@@ -368,13 +406,19 @@ def execute_browser_get_text(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_back
+# ──────────────────────────────────────────────────────
 def execute_browser_back(arguments: dict[str, Any]) -> dict[str, Any]:
     async def _back():
         page = await _get_page()
         if not page:
             return None
-        await page.go_back(wait_until="domcontentloaded", timeout=15000)
-        return {"title": await page.title(), "url": page.url}
+        await page.go_back()
+        await asyncio.sleep(0.5)
+        title = await page.title()
+        page_url = page.url
+        return {"title": title, "url": page_url}
 
     try:
         result = _run_async(_back())
@@ -385,13 +429,19 @@ def execute_browser_back(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_forward
+# ──────────────────────────────────────────────────────
 def execute_browser_forward(arguments: dict[str, Any]) -> dict[str, Any]:
     async def _forward():
         page = await _get_page()
         if not page:
             return None
-        await page.go_forward(wait_until="domcontentloaded", timeout=15000)
-        return {"title": await page.title(), "url": page.url}
+        await page.go_forward()
+        await asyncio.sleep(0.5)
+        title = await page.title()
+        page_url = page.url
+        return {"title": title, "url": page_url}
 
     try:
         result = _run_async(_forward())
@@ -402,20 +452,20 @@ def execute_browser_forward(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_tab_new
+# ──────────────────────────────────────────────────────
 def execute_browser_tab_new(arguments: dict[str, Any]) -> dict[str, Any]:
     url = arguments.get("url", "")
 
     async def _new_tab():
-        global _playwright_browser
-        if not _playwright_browser:
+        if not _context:
             return None
-        contexts = _playwright_browser.contexts
-        if not contexts:
-            return None
-        page = await contexts[0].new_page()
-        if url:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        return {"title": await page.title(), "url": page.url}
+        await _context.create_new_tab(url=url if url else None)
+        page = await _get_page()
+        title = await page.title()
+        page_url = page.url
+        return {"title": title, "url": page_url}
 
     try:
         result = _run_async(_new_tab())
@@ -426,17 +476,21 @@ def execute_browser_tab_new(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_tab_list
+# ──────────────────────────────────────────────────────
 def execute_browser_tab_list(arguments: dict[str, Any]) -> dict[str, Any]:
     async def _list_tabs():
-        global _playwright_browser
-        if not _playwright_browser:
+        if not _context:
             return []
-        contexts = _playwright_browser.contexts
-        if not contexts:
-            return []
+        tabs_info = await _context.get_tabs_info()
         tabs = []
-        for i, page in enumerate(contexts[0].pages):
-            tabs.append({"index": i, "title": await page.title(), "url": page.url})
+        for tab in tabs_info:
+            tabs.append({
+                "index": tab.page_id,
+                "title": tab.title,
+                "url": tab.url,
+            })
         return tabs
 
     try:
@@ -446,22 +500,20 @@ def execute_browser_tab_list(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_tab_switch
+# ──────────────────────────────────────────────────────
 def execute_browser_tab_switch(arguments: dict[str, Any]) -> dict[str, Any]:
     index = arguments.get("index", 0)
 
     async def _switch():
-        global _playwright_browser
-        if not _playwright_browser:
+        if not _context:
             return None
-        contexts = _playwright_browser.contexts
-        if not contexts:
-            return None
-        pages = contexts[0].pages
-        if 0 <= index < len(pages):
-            page = pages[index]
-            await page.bring_to_front()
-            return {"title": await page.title(), "url": page.url}
-        return None
+        await _context.switch_to_tab(page_id=index)
+        page = await _get_page()
+        title = await page.title()
+        page_url = page.url
+        return {"title": title, "url": page_url}
 
     try:
         result = _run_async(_switch())
@@ -472,18 +524,26 @@ def execute_browser_tab_switch(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────
+# browser_close
+# ──────────────────────────────────────────────────────
 def execute_browser_close(arguments: dict[str, Any]) -> dict[str, Any]:
     logger.info("browser_close called")
 
     async def _close():
-        global _browser_instance, _playwright_browser
-        if _browser_instance:
+        global _browser, _context
+        if _context:
             try:
-                await _browser_instance.close()
+                await _context.close()
             except Exception:
                 pass
-            _browser_instance = None
-            _playwright_browser = None
+            _context = None
+        if _browser:
+            try:
+                await _browser.close()
+            except Exception:
+                pass
+            _browser = None
 
     try:
         loop = _ensure_loop()
