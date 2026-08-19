@@ -270,21 +270,34 @@ def _replay_conversation(history: list[dict[str, Any]], session_dir: Path | None
         role = msg.get("role", "")
         if session_dir:
             _debug_log(session_dir, f"  msg role={role} content_type={type(msg.get('content')).__name__}")
-        if role == "user":
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                console.print(f"[bold cyan]you>[/bold cyan] {escape(content)}")
-        elif role == "assistant":
-            text = msg.get("content") or ""
-            tool_calls = msg.get("tool_calls", [])
-            if tool_calls:
-                names = [tc.get("function", {}).get("name", "?") for tc in tool_calls]
-                console.print(f"[blue]assistant>[/blue] [dim]called {escape(', '.join(names))}[/dim]")
-            if isinstance(text, str) and text:
-                console.print(f"[blue]assistant>[/blue] {escape(text)}")
-        elif role == "tool":
-            raw = msg.get("content", "")
-            console.print(f"[dim]tool> {escape(str(raw) if not isinstance(raw, str) else raw)}[/dim]")
+        try:
+            if role == "user":
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    console.print(f"[bold cyan]you>[/bold cyan] {escape(content)}")
+            elif role == "assistant":
+                text = msg.get("content") or ""
+                tool_calls = msg.get("tool_calls", [])
+                if tool_calls:
+                    names = [tc.get("function", {}).get("name", "?") for tc in tool_calls]
+                    console.print(f"[blue]assistant>[/blue] [dim]called {escape(', '.join(names))}[/dim]")
+                if isinstance(text, str) and text:
+                    console.print(f"[blue]assistant>[/blue] {escape(text)}")
+            elif role == "tool":
+                raw = msg.get("content", "")
+                tool_text = str(raw) if not isinstance(raw, str) else raw
+                console.print(f"[dim]tool> {escape(tool_text)}[/dim]")
+        except Exception:
+            # Fallback to plain print if rich rendering fails on complex/malformed unicode
+            try:
+                if role == "user":
+                    print(f"you> {msg.get('content', '')}")
+                elif role == "assistant":
+                    print(f"assistant> {msg.get('content', '')}")
+                elif role == "tool":
+                    print(f"tool> {msg.get('content', '')}")
+            except Exception:
+                pass
     console.print("[dim]─── end of history ───[/dim]\n")
 
 

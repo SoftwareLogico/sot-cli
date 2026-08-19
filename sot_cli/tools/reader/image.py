@@ -32,19 +32,19 @@ def read_image(path: Path, ext: str, size_bytes: int, supports_images: bool) -> 
         img = ImageOps.exif_transpose(img)
         display_width, display_height = img.size
 
-        if mime == "image/jpeg" and img.mode not in {"RGB", "L"}:
-            img = img.convert("RGB")
+        # Forzar el formato a JPEG o PNG para compatibilidad con APIs estrictas (LM Studio)
+        if img.mode in ("RGBA", "P"):
+            save_format = "PNG"
+            mime = "image/png"
+            save_kwargs: dict[str, Any] = {"optimize": True}
+        else:
+            if img.mode not in {"RGB", "L"}:
+                img = img.convert("RGB")
+            save_format = "JPEG"
+            mime = "image/jpeg"
+            save_kwargs: dict[str, Any] = {"quality": 92, "optimize": True}
 
         buffer = io.BytesIO()
-        save_format = "JPEG" if mime == "image/jpeg" else (img.format or ext.upper())
-        save_kwargs: dict[str, Any] = {}
-        if save_format == "JPEG":
-            save_kwargs = {"quality": 92, "optimize": True}
-        elif save_format == "PNG":
-            save_kwargs = {"optimize": True}
-        elif save_format == "WEBP":
-            save_kwargs = {"quality": 92}
-
         img.save(buffer, format=save_format, **save_kwargs)
         output_bytes = buffer.getvalue()
     except ImportError:
@@ -68,13 +68,23 @@ def read_image(path: Path, ext: str, size_bytes: int, supports_images: bool) -> 
         payload["display_height"] = display_height
 
     supplemental_messages = []
-    supplemental_messages.append(
-        _tool_meta_message(
-            [
-                _text_part(f"Supplemental image content from read_text_file for {path}."),
-                _image_part(mime, b64),
-            ]
+    # Solo inyectar la imagen si el modelo realmente soporta visión
+    if supports_images:
+        supplemental_messages.append(
+            _tool_meta_message(
+                [
+                    _text_part(f"Supplemental image content from read_text_file for {path}."),
+                    _image_part(mime, b64),
+                ]
+            )
         )
-    )
+    else:
+        supplemental_messages.append(
+            _tool_meta_message(
+                [
+                    _text_part(f"[Image file {path.name} omitted because the current model does not support vision.]"),
+                ]
+            )
+        )
 
     return ToolPayload(payload=payload, supplemental_messages=supplemental_messages)
