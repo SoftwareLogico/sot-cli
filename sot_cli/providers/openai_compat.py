@@ -775,6 +775,7 @@ class OpenAICompatibleAdapter:
 
         self.capability = ProviderCapability(
             supports_tools=bool(caps.get("trained_for_tool_use", False)),
+            supports_images=bool(caps.get("vision", False)),
             supports_pdfs=False,
             supports_audio=False,
             supports_video=False,
@@ -1190,7 +1191,7 @@ def build_chat_completions_payload(request: ProviderRequest, resolved_model: str
 
     if request.enable_tools and request.tools:
         tools = request.tools
-        if is_openai:
+        if is_openai or request.provider_name == "lmstudio":
             # OpenAI's tool-call validator rejects schemas that use
             # oneOf/anyOf/allOf/not at the TOP LEVEL of `function.parameters`
             # (HTTP 400: "schema must have type 'object' and not have ...").
@@ -1254,28 +1255,27 @@ _OPENAI_FORBIDDEN_TOP_LEVEL_SCHEMA_KEYS: frozenset[str] = frozenset(
 
 
 def _sanitize_tool_schema_for_openai(tool: dict[str, Any]) -> dict[str, Any]:
-    """Return a shallow-cloned copy of `tool` with the forbidden top-level
-    schema keys stripped from `function.parameters`.
+    """Súper sanitizador recursivo: elimina validadores complejos que crashean 
+    los motores de gramática GBNF (llama.cpp/LM Studio) y la API estricta de OpenAI."""
+    def _clean(node: Any) -> Any:
+        if isinstance(node, list):
+            return [_clean(x) for x in node]
+        if isinstance(node, dict):
+            cleaned = {}
+            for k, v in node.items():
+                # Eliminamos recursivamente TODO lo que hace crashear a LM Studio
+                if k in {"oneOf", "anyOf", "allOf", "not", "additionalProperties"}:
+                    continue
+                cleaned[k] = _clean(v)
+            return cleaned
+        return node
 
-    Only the top level of `parameters` is touched. Constructs nested deeper
-    inside individual property schemas (e.g. a property whose schema uses
-    `enum`) are left alone — OpenAI accepts those. The original `tool` dict
-    is not mutated; sibling keys (`type`, `properties`, `required`,
-    `additionalProperties`, `description`, …) survive untouched.
-    """
     sanitized = dict(tool)
-    func = sanitized.get("function")
-    if not isinstance(func, dict):
-        return sanitized
-    func = dict(func)
-    sanitized["function"] = func
-    params = func.get("parameters")
-    if not isinstance(params, dict):
-        return sanitized
-    params = dict(params)
-    func["parameters"] = params
-    for forbidden in _OPENAI_FORBIDDEN_TOP_LEVEL_SCHEMA_KEYS:
-        params.pop(forbidden, None)
+    if "function" in sanitized and isinstance(sanitized["function"], dict):
+        func = dict(sanitized["function"])
+        if "parameters" in func and isinstance(func["parameters"], dict):
+            func["parameters"] = _clean(func["parameters"])
+        sanitized["function"] = func
     return sanitized
 
 
