@@ -81,9 +81,23 @@ SESSIONS:
     "provider": "openrouter",
     "model": "openrouter/owl-alpha",
     ...
+    "last_message": {
+      "role": "assistant",
+      "content": "Fixed the bug in query.py by ..."
+    },
+    "sot_files": [
+      "/Users/me/projects/app/src/query.py",
+      "/Users/me/projects/app/ARCHITECTURE.md"
+    ]
   }
 ]
 ```
+
+Enrichment notes:
+
+- `last_message` skips system messages, ephemeral `=== SOURCE OF TRUTH ===` / `=== CURRENT METADATA ===` injections and empty assistant husks. An assistant turn that only emitted tool calls is summarized as `"[called tools: <names>]"`. Snippets are truncated to 200 chars.
+- `sot_files` is extracted header-only from the LAST SoT block of the persisted payload (text file headers plus media paths from supplemental read markers). It mirrors what would be rebuilt into the SoT on resume, without parsing file bodies — so listing hundreds of sessions stays cheap.
+- Sessions with no conversation yet report `"last_message": null` and `"sot_files": []`.
 
 ### CLI commands used to run agents
 

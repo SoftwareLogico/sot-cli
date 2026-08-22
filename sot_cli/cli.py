@@ -1358,6 +1358,124 @@ def _clean_sot_session(session_id: str, sessions_dir=None):
     else:
         console.print(f"[dim]Session {escape(session_id)} has no SoT data to clean.[/dim]")
 
+_LIST_SNIPPET_CHARS = 200
+_SOT_PREFIX_STR = "=== SOURCE OF TRUTH ==="
+_META_PREFIX_STR = "=== CURRENT METADATA ==="
+_FILE_HEADER_RE = re.compile(r"^--- FILE: (.+?) \(\d+ lines(?:, [\d,]+ bytes)?\) ---\s*$")
+_MEDIA_MARKER_RE = re.compile(r"Supplemental \w+ content from read_text_file for (.+?)(?:\. Requested pages:|\.\n|\n|\. |\.$)")
+
+
+def _message_plain_text(msg: dict[str, Any]) -> str:
+    """Best-effort plain-text extraction from a chat message.
+
+    Handles string content and rich list content (text blocks only).
+    """
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n\n".join(parts)
+    return ""
+
+
+def _extract_last_message(messages: list[Any]) -> dict[str, str] | None:
+    """Return {role, content} of the last meaningful user/assistant message.
+
+    Skips system messages, ephemeral SoT/metadata injections, empty
+    assistant husks, and tool-role messages. An assistant turn that only
+    emitted tool calls is summarized as '[called tools: ...]'.
+    """
+    for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role", "")
+        if role == "system":
+            continue
+        text = _message_plain_text(msg)
+        stripped = text.lstrip()
+        if stripped.startswith(_SOT_PREFIX_STR) or stripped.startswith(_META_PREFIX_STR):
+            continue
+        if role == "assistant":
+            tool_calls = msg.get("tool_calls") or []
+            if not text.strip() and tool_calls:
+                names = [
+                    tc.get("function", {}).get("name", "?")
+                    for tc in tool_calls
+                    if isinstance(tc, dict)
+                ]
+                return {
+                    "role": "assistant",
+                    "content": f"[called tools: {', '.join(names)}]",
+                }
+            if not text.strip():
+                continue
+        if role not in ("user", "assistant"):
+            continue
+        snippet = text.strip()
+        if len(snippet) > _LIST_SNIPPET_CHARS:
+            snippet = snippet[:_LIST_SNIPPET_CHARS].rstrip() + "…"
+        return {"role": role, "content": snippet}
+    return None
+
+
+def _extract_sot_files(messages: list[Any]) -> list[str]:
+    """Extract tracked file paths from the LAST SoT block in the payload.
+
+    Mirrors what ``load_sot_state_from_request_json`` would rebuild on
+    resume, but header-only (no file bodies parsed) so listing hundreds
+    of sessions stays cheap.
+    """
+    for msg in reversed(messages):
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        text = _message_plain_text(msg)
+        if not text.lstrip().startswith(_SOT_PREFIX_STR):
+            continue
+
+        paths: list[str] = []
+        seen: set[str] = set()
+
+        def _push(candidate: str | None) -> None:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                paths.append(candidate)
+
+        for line in text.split("\n"):
+            match = _FILE_HEADER_RE.match(line)
+            if match:
+                _push(match.group(1))
+                continue
+            media_match = _MEDIA_MARKER_RE.search(line)
+            if media_match:
+                _push(media_match.group(1))
+        return paths
+    return []
+
+
+def _session_insights(session_dir: Path) -> tuple[dict[str, str] | None, list[str]]:
+    """Read request.json once and pull (last_message, sot_files).
+
+    Never raises: any parse failure degrades gracefully to (None, []).
+    """
+    request_file = session_dir / "request.json"
+    if not request_file.is_file():
+        return None, []
+    try:
+        request_data = json.loads(request_file.read_text(encoding="utf-8"))
+        messages = request_data.get("payload", {}).get("messages", [])
+    except (json.JSONDecodeError, OSError, AttributeError):
+        return None, []
+    if not isinstance(messages, list):
+        return None, []
+    return _extract_last_message(messages), _extract_sot_files(messages)
+
+
 def _list_sessions(sessions_dir=None):
     import json
     from pathlib import Path
@@ -1371,7 +1489,7 @@ def _list_sessions(sessions_dir=None):
         return
 
     sessions = []
-    for session_dir in sorted(sessions_path.iterdir(), reverse=True):
+    for session_dir in sorted(sessions_path.iterdir()):
         if not session_dir.is_dir():
             continue
         session_file = session_dir / "session.json"
@@ -1379,9 +1497,15 @@ def _list_sessions(sessions_dir=None):
             try:
                 data = json.loads(session_file.read_text(encoding="utf-8"))
                 data["id"] = session_dir.name
-                sessions.append(data)
             except Exception:
-                pass
+                continue
+
+            # Enrich with last conversation message + SoT tracked files
+            # so a bare listing tells you what each session was about.
+            last_message, sot_files = _session_insights(session_dir)
+            data["last_message"] = last_message
+            data["sot_files"] = sot_files
+            sessions.append(data)
 
     print("SESSIONS:")
     print(json.dumps(sessions, indent=2, ensure_ascii=False, default=str))
