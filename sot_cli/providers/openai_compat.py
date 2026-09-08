@@ -1283,10 +1283,18 @@ def _events_from_chunk(chunk: dict[str, Any]) -> list[ProviderEvent]:
     events: list[ProviderEvent] = []
 
     # 1. Comprobamos si el chunk reporta un error de generación del proveedor a mitad de stream
+    # (error embebido en el SSE por el gateway upstream: OpenRouter, Bedrock Mantle, etc.)
     err = chunk.get("error")
     if isinstance(err, dict):
-        err_msg = err.get("message") or err.get("type") or "Unknown streaming error"
-        events.append(ProviderEvent(type="error", payload={"message": f"Mantle Stream Error: {err_msg}"}))
+        err_code = err.get("code") or err.get("type") or ""
+        err_msg = err.get("message") or "Unknown streaming error"
+        label = f"[{err_code}] " if err_code else ""
+        events.append(
+            ProviderEvent(
+                type="error",
+                payload={"message": f"Upstream streaming error: {label}{err_msg}"},
+            )
+        )
         return events
 
     # 2. Procesamiento estándar si no hay errores
