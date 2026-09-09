@@ -15,7 +15,13 @@ if _ssl_cert_file and not os.path.exists(_ssl_cert_file):
 
 from sot_cli.constants import COMPRESSED_TOOLS
 from sot_cli.message_builder import build_user_turn_message
-from sot_cli.providers.base import ProviderCapability, ProviderCompletion, ProviderEvent, ProviderRequest
+from sot_cli.providers.base import (
+    ProviderCapability,
+    ProviderCompletion,
+    ProviderEvent,
+    ProviderRequest,
+    UpstreamStreamError,
+)
 
 
 # Word-boundary scan used by ``_is_successful_tool_response``. Matches any
@@ -604,6 +610,38 @@ def _write_session_json(label: str, data: Any, session_id: str = "") -> Path:
     return path
 
 
+def _humanize_provider_http_error(status_code: int, body: str) -> str:
+    """Return the terminal-facing message for an HTTP error response.
+
+    The raw provider body always lands untouched in ``error.json`` for
+    debugging; this helper only rewrites the message shown on screen for
+    KNOWN, actionable cases. Currently: OpenRouter's attestation-gate 403s
+    (``metadata.missing_attestation_types``, typically ``age_18plus``), where
+    the raw JSON is opaque but the fix lives entirely outside the CLI — in
+    the account settings of the OpenRouter account that owns the API key.
+    """
+    if status_code == 403 and "missing_attestation_types" in body:
+        missing = ""
+        try:
+            meta = (json.loads(body).get("error") or {}).get("metadata") or {}
+            types = meta.get("missing_attestation_types") or []
+            if types:
+                missing = ", ".join(str(t) for t in types)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+        shown = missing or "unknown attestation"
+        return (
+            f"Provider request failed ({status_code}): OpenRouter requires a missing account "
+            f"attestation: {shown}. Open https://openrouter.ai/settings/preferences logged into the "
+            f"SAME account that owns this API key, save the missing confirmation, wait ~30s, then "
+            f"retry. Already confirmed and still failing? (1) you confirmed on a DIFFERENT OpenRouter "
+            f"account than the one that issued this key — cross-check the user_id/org_id in "
+            f"error.json, (2) re-save the toggle (stale browser session), or (3) switch model. "
+            f"Retrying is useless until the account state changes."
+        )
+    return f"Provider request failed ({status_code}): {body}"
+
+
 class OpenAICompatibleAdapter:
     def __init__(
         self,
@@ -933,8 +971,20 @@ class OpenAICompatibleAdapter:
                     if response.is_error:
                         body = (await response.aread()).decode("utf-8", errors="replace")
                         _write_session_json("error", {"status": response.status_code, "body": body}, session_id=request.session_id)
-                        raise RuntimeError(f"Provider request failed ({response.status_code}): {body}")
+                        raise UpstreamStreamError(
+                            _humanize_provider_http_error(response.status_code, body),
+                            status_code=response.status_code,
+                        )
 
+                    # Stream-completeness tracking: a graceful stream always
+                    # ends with a finish_reason chunk and/or the [DONE]
+                    # sentinel. If the connection closes without either, the
+                    # generation was killed mid-flight by the gateway (the
+                    # silent sibling of the injected 502 error chunk) and the
+                    # round must be retried, not silently swallowed as an
+                    # "empty reply".
+                    saw_done = False
+                    saw_finish_reason = False
                     async for line in response.aiter_lines():
                         if not line or line.startswith(":"):
                             continue
@@ -947,18 +997,66 @@ class OpenAICompatibleAdapter:
                         
                         # Skip [DONE] marker, but process all chunks including usage before it
                         if data == "[DONE]":
+                            saw_done = True
                             continue
 
                         try:
                             chunk = json.loads(data)
                             raw_chunks.append(chunk)
                             for event in _events_from_chunk(chunk):
+                                if event.type == "error":
+                                    # Gateway-injected SSE error chunk (e.g. OpenRouter's
+                                    # "[502] JSON error injected into SSE stream"). Raise
+                                    # the typed exception so the turn-level retry loop in
+                                    # query.py replays the identical request instead of
+                                    # aborting the whole turn.
+                                    code = event.payload.get("code")
+                                    status_code = (
+                                        int(code)
+                                        if isinstance(code, (int, str)) and str(code).isdigit()
+                                        else None
+                                    )
+                                    _write_session_json(
+                                        "error",
+                                        {
+                                            "sse_error": event.payload.get("message", "Unknown streaming error"),
+                                            "code": code,
+                                            "chunks_seen": len(raw_chunks),
+                                        },
+                                        session_id=request.session_id,
+                                    )
+                                    raise UpstreamStreamError(
+                                        str(event.payload.get("message", "Unknown streaming error")),
+                                        status_code=status_code,
+                                    )
+                                if event.type == "finished":
+                                    saw_finish_reason = True
                                 yield event
                         except json.JSONDecodeError:
                             # Skip malformed chunks
                             continue
+                    # ── Stream-completeness gate ──
+                    # The `async for` above ended because the server closed
+                    # the connection. A graceful completion always delivered
+                    # a finish_reason and/or [DONE]; reaching this point
+                    # without either means the gateway killed the generation
+                    # mid-flight. Raise a retryable error so the turn-level
+                    # loop resumes from the partial output instead of
+                    # returning a silent empty round.
+                    if not saw_done and not saw_finish_reason:
+                        raise UpstreamStreamError(
+                            "Upstream stream ended prematurely: the connection closed without a "
+                            "finish_reason or [DONE] marker (silent gateway drop mid-generation)",
+                            status_code=None,
+                        )
+
         except httpx.HTTPError as exc:
-            raise RuntimeError(f"Could not reach provider '{self.name}' at {self.base_url}: {exc}") from exc
+            # Transport-level failure (connect error, dropped connection,
+            # read error mid-stream) — transient by nature, always retryable.
+            raise UpstreamStreamError(
+                f"Could not reach provider '{self.name}' at {self.base_url}: {exc}",
+                status_code=None,
+            ) from exc
 
         if raw_chunks:
             _write_session_json("response-chunks", raw_chunks, session_id=request.session_id)
@@ -988,10 +1086,17 @@ class OpenAICompatibleAdapter:
                 response = await client.post(url, headers=headers, json=payload)
                 if response.is_error:
                     _write_session_json("error", {"status": response.status_code, "body": response.text}, session_id=request.session_id)
-                    raise RuntimeError(f"Provider request failed ({response.status_code}): {response.text}")
+                    raise UpstreamStreamError(
+                        _humanize_provider_http_error(response.status_code, response.text),
+                        status_code=response.status_code,
+                    )
                 body = response.json()
         except httpx.HTTPError as exc:
-            raise RuntimeError(f"Could not reach provider '{self.name}' at {self.base_url}: {exc}") from exc
+            # Transport-level failure — transient by nature, always retryable.
+            raise UpstreamStreamError(
+                f"Could not reach provider '{self.name}' at {self.base_url}: {exc}",
+                status_code=None,
+            ) from exc
 
         _write_session_json("response", body, session_id=request.session_id)
 
@@ -1292,7 +1397,10 @@ def _events_from_chunk(chunk: dict[str, Any]) -> list[ProviderEvent]:
         events.append(
             ProviderEvent(
                 type="error",
-                payload={"message": f"Upstream streaming error: {label}{err_msg}"},
+                payload={
+                    "message": f"Upstream streaming error: {label}{err_msg}",
+                    "code": err_code,
+                },
             )
         )
         return events

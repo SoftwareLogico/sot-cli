@@ -200,6 +200,34 @@ No parameters. Returns delegated tasks and status (RUNNING/COMPLETED). Prefer `w
 | `compression_reasoning_trunc_chars` | `240`   | Hard cap (chars) on the `reasoning` and the merged `reasoning_details` text of any tool-bearing assistant message in CLOSED turns when the outbound payload is built. Same cap is also used to clip the reasoning excerpt embedded in the `SYSTEM MESSAGE:` line that replaces successful `write_file` / `edit_files` pairs in old turns. The reasoning of the final user-facing assistant message of a closed turn (no `tool_calls`) is never truncated. The active turn is never compressed at all. Set to `0` to disable the cap (full reasoning round-trips for every turn). |
 | `play_finished_notification`          | `true`   | Play a short `.wav` sound from `assets/turn_done.wav` when a turn finishes. Uses `afplay` (macOS), `winsound` (Windows), or `aplay`/`paplay` (Linux). Useful when working away from the terminal — the audio tells you the model is done without having to stare at the screen. |
 | `max_readable_file_tokens`             | `64000`  | Max estimated tokens a single text file can have before `read_files` warns and requires `force: true`. The warning is triggered regardless of remaining context space — even when there is plenty of room, files above this threshold are blocked to prevent accidental context saturation. The estimate uses `tiktoken` with `o200k_base`. Set to `0` to disable the check entirely. |
+|| `stream_retry_attempts`                | `3`      | Extra automatic replays after the first attempt when the provider's stream dies mid-turn with a transient error (SSE-injected `[502]` chunks, dropped SSE connections, HTTP 5xx/429/408). The failed round has no persisted side effects, so recovery is safe and the prompt cache still hits. With `stream_resume_enabled` the recovery RESUMES the model's partial output instead of blind-replaying. `0` disables retries (the turn aborts with the old "System Error" behavior). |
+|| `stream_retry_backoff_seconds`         | `2.0`    | Base wait (seconds) before the first stream retry. Doubles on each further retry (2s → 4s → 8s), capped at 60s. Permanent 4xx failures (400 schema, 401 auth, 402 payment) are never retried regardless of this value. |
+|| `stream_resume_enabled`                | `true`   | When a killed attempt had already produced output (reasoning/text/tool-call fragments), the runtime injects that partial generation back as an assistant message (with the FULL partial reasoning) plus a synthetic user message — `[SYSTEM] ... Continue EXACTLY where you left off ... Tail of what you had already produced (last N chars): "...and with this i wil be"` — so the model continues its own response instead of restarting. The synthetic user message is mandatory: several models refuse to generate from an assistant-final payload. When nothing was produced (error at stream-open), the identical request is replayed instead. In-flight tool-call fragments (incomplete JSON args) are folded into the content as visible text — never emitted as real `tool_calls`, which would break strict pairing. `false` = always blind-replay. |
+|| `stream_resume_tail_chars`             | `400`    | Trailing characters of the killed generation quoted inside the synthetic continuation user message. The full partial reasoning/text still travels inside the assistant message; this only caps the pointer text. |
+
+### Upstream stream retry (mid-turn 502 recovery)
+
+OpenRouter (and other gateways) occasionally kill a stream mid-generation by injecting an SSE error chunk. The classic symptom is:
+
+    System Error: Upstream streaming error: [502] JSON error injected into SSE stream
+
+Since the failed round has produced no persisted side effects (no `chat_history` mutation, no tool execution, unchanged SoT), the runtime now replays the IDENTICAL request automatically instead of aborting the turn:
+
+- **Retryable failures:** SSE-embedded error chunks, transport-level drops (`httpx` connect/read/remote-protocol errors), and HTTP 5xx/429/408 — classified by `UpstreamStreamError.retryable` in `sot_cli/providers/base.py`. Permanent 4xx (400 schema, 401 auth, 402 payment) fail immediately as before.
+- **Continuation resume (partial-output recovery).** When the killed attempt had already produced output, the runtime does NOT blind-replay — it RESUMES. `_run_streaming_round` and `run_single_turn` capture everything the attempt had produced (reasoning, `reasoning_details`, visible text, in-flight merged tool-call fragments, usage) into a `PartialRoundState` attached to the `UpstreamStreamError`. The retry then appends a synthetic pair to the round payload:
+
+      {"role": "assistant", "content": <partial text (or the folded in-flight tool-call text, or the reasoning tail)>,
+                            "reasoning"/"reasoning_details": <FULL partial reasoning>}
+      {"role": "user", "content": "[SYSTEM] ... Continue EXACTLY where you left off ...
+                                   Tail of what you had already produced (last N chars):
+                                   \"...and with this i wil be\""}
+
+  The full partial reasoning travels verbatim in the assistant message (reasoning channel); the last-N-chars truncation (`stream_resume_tail_chars`) applies ONLY to the pointer quoted in the user message. The payload always ends with a user message — required by models that reject assistant-final payloads. The synthetic pair lives ONLY in the retry wire payload (never persisted to `chat_history`), and each further retry rebuilds from the pristine base messages keeping only the LATEST continuation, so repeated failures never accumulate bloat.
+- **What is preserved:** every completed round of the turn (executed tools and their results live in `chat_history`), the prompt cache (the prefix is unchanged), and — with resume — the model's own partial generation injected back. Byte-level token-stream resume is impossible (no OpenAI-compatible API exposes a resume/offset primitive); the continuation pair is the strongest equivalent: the model reads its own stopping point and continues mid-thought instead of starting over.
+- **UX:** a yellow warning line separates the killed stream's partial output from the retry (`auto-resume ...` when resuming, `auto-retry ...` when blind-replaying), so nothing that was already streamed disappears from the terminal and the turn never silently restarts.
+- **Silent stream-drop detection (premature EOF).** A graceful stream always ends with a `finish_reason` chunk and/or the `[DONE]` sentinel. The adapter tracks both; if the SSE connection closes without either, it raises a retryable `UpstreamStreamError` ("stream ended prematurely") so the drop flows through the same retry/resume machinery instead of silently producing an empty round and the "model stopped on its own" warning. This is the silent sibling of the injected 502: same recovery path, no user intervention.
+- **Empty-reply auto-continue after tools.** If a round ends with no tool calls, no visible text, and tools were already executed in the turn, the runtime no longer just warns and drops the turn: it injects a synthetic user nudge (`[SYSTEM] Your previous response ended after executing tools without a final reply. Continue the task from where you stopped...`) and keeps the tool loop alive, up to 2 auto-continues per turn (`_EMPTY_REPLY_AUTO_CONTINUE_MAX` in `query.py`). The nudge is a real user message because several models refuse to generate from a payload ending in an assistant turn, and it becomes the new active-turn boundary so the next round rebuilds cleanly with the tool results and the freshly rebuilt SoT block preceding it. After the cap, the classic warning returns.
+- **Content-filter refusals are loud, not silent.** When the upstream stops the stream gracefully with `native_finish_reason="sensitive"` (OpenRouter/Z.AI) or `finish_reason="content_filter"` (OpenAI) and emits zero content, the runtime prints a red explanation (moderation refusal on THIS payload — not a connection error), marks the turn as errored, and skips nudging/retrying because the filter would refuse again. A plain empty response on a fresh turn now warns too, instead of ending 100% silently.
 
 ## Provider configuration (`[providers.X]`)
 
@@ -612,6 +640,34 @@ The agent uses a combination of screenshots and DOM text to understand page layo
 Heavy web research tasks can be delegated to sub-agents. The sub-agent browses the web, collects information, and returns a clean markdown report to the Boss — keeping the main context clean.
 
 ## Known issues
+
+### Silent empty turns: upstream content filter (`native_finish_reason: "sensitive"`)
+
+Symptom: you send a prompt (often "continue, something failed"), the turn finishes in seconds with NO thinking, NO text, NO tool calls, and NO error — the Turn Summary renders and nothing happened. All other sessions keep working fine.
+
+Diagnosis: open `.sot-cli/sessions/<id>/response-chunks.json` (rewritten on every stream, always tiny). A refusal looks like:
+
+    {"choices":[{"delta":{"content":"","role":"assistant"},
+                 "finish_reason":"stop","native_finish_reason":"sensitive"}]}
+
+That is the upstream provider (e.g. Z.AI behind OpenRouter) flagging THIS payload's content (text and/or images) with its moderation system and cutting the generation — not a connection failure. There is no error chunk, so nothing appears in `debug.log` and no `error.json` is written.
+
+Runtime behavior now: red explanation + turn marked as error; auto-continue/retry is skipped because the filter would refuse the same payload again. Options: switch model or provider, remove/replace the flagged images, or restrict the upstream with `provider_selection`.
+
+### OpenRouter attestation-gate HTTP 403 (`missing_attestation_types`)
+
+Some OpenRouter endpoints (often the ONLY endpoints serving certain models) are gated behind account attestations — typically `age_18plus`. Rejected requests answer HTTP 403 with a `metadata.missing_attestation_types` array and `failed_routing_step: "Gate Endpoints with Attestations"`. The adapter rewrites this specific case into an actionable message (raw JSON still lands in `error.json` for cross-checking the `user_id`/`org_id`):
+
+    Provider request failed (403): OpenRouter requires a missing account attestation: age_18plus.
+    Open https://openrouter.ai/settings/preferences logged into the SAME account that owns this API key, ...
+
+The fix is entirely outside the CLI. The three real-world causes, in order of frequency:
+
+1. The browser session used to confirm is logged into a DIFFERENT OpenRouter account than the one that issued the API key in `sot.keys.toml` (the error body carries the exact `user_id`/`org_id` to cross-check).
+2. The toggle was not actually saved (stale session, adblock/cookie blockers) — re-save it.
+3. Propagation delay right after confirming — wait ~30s and retry.
+
+The error is classified permanent (non-retryable) because replaying cannot change the account state.
 
 ### Switching between models or providers on a resumed session
 

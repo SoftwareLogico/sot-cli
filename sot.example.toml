@@ -93,6 +93,35 @@ primary_provider = "ollama"   # fallback when no --provider flag is given
     # Same cap for sub-agents. 0 means unlimited.
     delegated_reasoning_char_budget = 0
 
+    # ── Upstream stream retry ──────────────────────────────────────────────
+
+    # When the provider's stream dies mid-turn (e.g. OpenRouter injecting a
+    # "[502] JSON error injected into SSE stream" chunk, a dropped SSE
+    # connection, or a 5xx at stream-open), the runtime replays the SAME
+    # request automatically instead of aborting the turn. Everything already
+    # executed in the turn (tool calls, results, prior rounds) is preserved;
+    # only the in-flight generation is replayed. Set to 0 to disable retries
+    # (old behavior: the turn aborts with "System Error").
+    stream_retry_attempts = 3
+
+    # Base wait in seconds before the first retry. Doubles on each further
+    # retry (2s, 4s, 8s, ...), capped at 60s.
+    stream_retry_backoff_seconds = 2.0
+
+    # When a killed attempt had already produced output (reasoning/text/
+    # tool-call fragments), the runtime injects that partial generation back
+    # as an assistant message plus a synthetic user message ("continue from
+    # where you left off: <tail>"), so the model RESUMES its own response
+    # instead of starting over. Identical replay is used only when nothing
+    # was produced (e.g. 502 at stream-open). false = always replay.
+    stream_resume_enabled = true
+
+    # Trailing characters of what the model had already produced, quoted
+    # inside the synthetic continuation user message. The FULL partial
+    # reasoning/text still travels in the assistant message; this only caps
+    # the size of the pointer text.
+    stream_resume_tail_chars = 400
+
     # ── Token economy (compression) ────────────────────────────────────────
 
     # Play a notification sound when a turn finishes (so you know to look at
