@@ -78,6 +78,25 @@ FALLBACK_SEARCH_TIMEOUT_SECONDS = 30
 FALLBACK_REASONING_CHAR_BUDGET = 0
 FALLBACK_DELEGATED_REASONING_CHAR_BUDGET = 0
 
+# ── Upstream stream retry (mid-turn 502 recovery) ──────────────────────────
+# When the provider's stream dies mid-turn (SSE error chunks injected by the
+# gateway — e.g. OpenRouter's "[502] JSON error injected into SSE stream" —
+# dropped connections, or 5xx at stream-open), the turn-level loop replays
+# the SAME request instead of aborting the turn. Nothing has been persisted
+# for the failed round yet, so the replay is safe and prompt-cache friendly.
+FALLBACK_STREAM_RETRY_ATTEMPTS = 3
+FALLBACK_STREAM_RETRY_BACKOFF_SECONDS = 2.0
+# When the killed attempt had already produced output (reasoning/text/tool
+# fragments), the retry injects that partial generation back as an assistant
+# message plus a synthetic user message ("continue from where you left off")
+# so the model RESUMES its own response instead of starting over. Identical
+# replay is used only when nothing was produced (error at stream-open).
+FALLBACK_STREAM_RESUME_ENABLED = True
+# Trailing characters of what the model had already produced, quoted inside
+# the synthetic continuation user message. The FULL partial reasoning/text
+# still travels inside the assistant message; this only caps the pointer.
+FALLBACK_STREAM_RESUME_TAIL_CHARS = 400
+
 # Fallback threshold for max tokens a single text file can have before read_files
 # warns and requires `force: true`. Overridable via [tools].max_readable_file_tokens
 # in sot.toml. Set to 0 to disable the warning entirely.

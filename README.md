@@ -357,6 +357,7 @@ All runtime settings live in `sot.toml` under `[tools]`. In a nutshell:
 - **Streaming visibility:** `show_thinking` (model reasoning), `show_full` (tool call arguments in real time).
 - **Loop limits:** `max_rounds` (boss), `delegated_max_rounds` (sub-agent), `repeat_limit` / `delegated_repeat_limit` (abort on identical consecutive rounds).
 - **Reasoning budget:** `reasoning_char_budget` (boss), `delegated_reasoning_char_budget` (sub-agent) — hard cap on streamed reasoning characters per turn. Set it to `0` to disable.
+- **Upstream resilience:** `stream_retry_attempts` + `stream_resume_enabled` — mid-turn 502s are retried automatically and the model's own partial output (reasoning included) is injected back so it continues where it stopped instead of losing everything. Silent stream drops (connection closed without `finish_reason`/`[DONE]`) are detected and retried too, and an empty reply right after tools is auto-continued with a synthetic nudge instead of dropping the turn. Content-filter refusals (`native_finish_reason: "sensitive"` / `content_filter`) are surfaced with a red explanation instead of ending silently.
 
 For the full reference table with defaults and descriptions, and see [ARCHITECTURE.md](ARCHITECTURE.md#session-and-config-notes-for-orchestration).
 

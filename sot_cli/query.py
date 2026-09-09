@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import asyncio
+from dataclasses import dataclass, field, replace
 import json
 import re
 import sys
@@ -15,10 +16,19 @@ from sot_cli.constants import (
     FALLBACK_DELEGATED_REPEAT_LIMIT,
     FALLBACK_REASONING_CHAR_BUDGET,
     FALLBACK_REPEAT_LIMIT,
+    FALLBACK_STREAM_RESUME_ENABLED,
+    FALLBACK_STREAM_RESUME_TAIL_CHARS,
+    FALLBACK_STREAM_RETRY_ATTEMPTS,
+    FALLBACK_STREAM_RETRY_BACKOFF_SECONDS,
     SESSION_MUTATION_TOOLS,
 )
 from sot_cli.message_builder import build_previous_turn_metadata_message
-from sot_cli.providers.base import ProviderAdapter, ProviderRequest
+from sot_cli.providers.base import (
+    PartialRoundState,
+    ProviderAdapter,
+    ProviderRequest,
+    UpstreamStreamError,
+)
 from sot_cli.runtime import AppRuntime
 from sot_cli.sot import (
     SoTState,
@@ -37,6 +47,11 @@ from sot_cli.tools import ToolRegistry
 # terminal (Windows cmd, PowerShell, iTerm, Terminal.app, tmux, etc).
 #
 _REASONING_NEWLINE_RUN_RE = re.compile(r"\n{3,}")
+
+# Hard ceiling (seconds) for a single stream-retry backoff sleep. The base
+# delay comes from [tools].stream_retry_backoff_seconds and doubles per
+# retry; this cap keeps a misconfigured base from stalling the turn.
+_STREAM_RETRY_BACKOFF_CAP_SECONDS: float = 60.0
 
 
 def _play_turn_done_sound(cfg: Any) -> None:
@@ -244,6 +259,203 @@ def _write_meta(state: StreamRenderState, text: str, ends_on_newline: bool) -> N
     state.at_line_start = ends_on_newline
 
 
+def _notify_stream_retry(
+    exc: Exception,
+    *,
+    attempt: int,
+    max_attempts: int,
+    delay: float,
+    resuming: bool = False,
+) -> None:
+    """Announce an automatic stream retry/resume on the terminal.
+
+    Written straight to sys.stdout (not through Rich) so it lands exactly
+    after whatever partial reasoning/tool-args the killed stream already
+    printed. The leading newline is unconditional: a dead stream almost
+    always leaves the cursor mid-line, and the retry's fresh render state
+    cannot know the real cursor position.
+    """
+    message = " ".join(str(exc).split()) or "unknown upstream stream error"
+    if len(message) > 200:
+        message = message[:197] + "..."
+    if resuming:
+        action = (
+            f"auto-resume {attempt}/{max_attempts} in {delay:.0f}s — continuing the SAME response "
+            f"from where it stopped; completed work in this turn is preserved."
+        )
+    else:
+        action = (
+            f"auto-retry {attempt}/{max_attempts} in {delay:.0f}s — replaying the identical request; "
+            f"work already completed in this turn is preserved."
+        )
+    sys.stdout.write(
+        f"\n\x1b[33m⚠ stream interrupted: {message}\x1b[0m\n"
+        f"\x1b[33m⚠ {action}\x1b[0m\n"
+    )
+    sys.stdout.flush()
+
+
+# Synthetic user message injected before a resumed attempt. It is REQUIRED
+# because several models refuse to generate from a payload whose final
+# message is an assistant turn — they expect the conversation to end with a
+# user message. The tail quoted inside it is only a pointer to where the
+# model stopped; the full partial generation travels in the assistant msg.
+_STREAM_RESUME_USER_TEMPLATE = (
+    "[SYSTEM] Your previous generation was cut off mid-response by an upstream "
+    "stream error before the request completed. Continue EXACTLY where you left "
+    "off — same task, same thread of thought, no restart, no repetition, no "
+    "apology, no re-explanation. Resume mid-sentence if that is where you were.\n"
+    "Tail of what you had already produced (last {tail_chars} characters):\n"
+    "\"{tail}\""
+)
+
+# ── Empty-reply auto-continue after tools ─────────────────────────────────
+# When a round ends with NO tool calls and NO visible text while tools were
+# already executed in the turn, the runtime does not just print the "model
+# stopped on its own" warning and drop the turn: it injects a synthetic user
+# nudge and keeps the tool loop alive (bounded), so the model finishes the
+# task it started. The nudge is a real user message because several models
+# refuse to generate from a payload that ends in an assistant turn.
+_EMPTY_REPLY_AUTO_CONTINUE_MAX = 2
+_EMPTY_REPLY_CONTINUE_MESSAGE = (
+    "[SYSTEM] Your previous response ended after executing tools without a "
+    "final reply (no text and no new tool calls). Continue the task from "
+    "where you stopped: use the tool results you already received and the "
+    "SoT block. Do not repeat tool calls you already made — produce the next "
+    "step or the final answer."
+)
+
+# Finish reasons that mean the upstream's moderation/safety system refused
+# the payload and cut the generation with ZERO content. The stream ends
+# gracefully (no error chunk, no premature EOF), so without this check the
+# refusal was swallowed as a silent empty turn.
+_UNSAFE_FINISH_REASONS = frozenset({"sensitive", "content_filter"})
+
+
+def _print_content_filter_refusal(console: Console, finish_reason: str) -> None:
+    """Explain an upstream moderation refusal that produced zero content.
+
+    Gateways stop the stream gracefully (no error chunk, no premature EOF)
+    with ``native_finish_reason="sensitive"`` (OpenRouter/Z.AI) or
+    ``finish_reason="content_filter"`` (OpenAI) when their moderation system
+    flags the payload. Retrying the same payload reproduces the refusal, so
+    the only honest response is a clear explanation with the user's options.
+    """
+    console.print(
+        "[bold red]⚠ Upstream content filter — the provider stopped the generation "
+        f"without emitting anything (finish_reason={finish_reason}).[/bold red]"
+    )
+    console.print(
+        "[yellow]This is NOT a connection error: the upstream's safety/moderation system "
+        "refused THIS payload's content (text and/or images). Retrying the same payload "
+        "will fail the same way.[/yellow]"
+    )
+    console.print(
+        "[yellow]Options: switch model or provider (another model on `--provider openrouter`, "
+        "or restrict the upstream with `provider_selection`), remove/replace the flagged "
+        "images, or start a fresh session and re-attach only the needed files.[/yellow]"
+    )
+
+
+def _fold_partial_tool_calls(tool_state: dict[int, dict[str, Any]] | None) -> str:
+    """Render in-flight (possibly incomplete) tool calls as visible text.
+
+    A stream killed mid-tool-call leaves ``function.arguments`` with
+    INVALID (incomplete) JSON. Emitting that as a real ``tool_calls`` entry
+    would be rejected by strict providers (and would break the
+    tool_call → tool-response pairing invariant, since the continuation
+    payload ends with a user message). Folding the fragments into plain
+    text lets the model SEE exactly what it was emitting and re-produce a
+    complete, valid tool call on the resumed attempt.
+    """
+    if not tool_state:
+        return ""
+    parts: list[str] = []
+    for index in sorted(tool_state):
+        entry = tool_state[index]
+        func = entry.get("function") or {}
+        name = str(func.get("name", "") or "")
+        args = str(func.get("arguments", "") or "")
+        if not name and not args:
+            continue
+        parts.append(f"tool_call: {name or '?'}({args}")
+    return "\n".join(parts)
+
+
+def _build_continuation_block(partial: Any, tail_chars: int) -> list[dict[str, Any]] | None:
+    """Build the [partial-assistant, continue-user] injection pair.
+
+    Returns ``None`` when there is nothing to resume from (the stream died
+    before the model produced any reasoning/text/tool fragment — e.g. a
+    502 at stream-open). In that case the caller falls back to replaying
+    the identical request, which is the cheapest and safest recovery.
+
+    Shape produced::
+
+        {"role": "assistant",
+         "content": <partial text | folded tool text | reasoning tail>,
+         "reasoning"/"reasoning_details": <FULL partial reasoning>}
+        {"role": "user",
+         "content": '[SYSTEM] ... Continue EXACTLY where you left off ...
+                     Tail of what you had already produced (last N chars):
+                     "...and with this i wil be"'}
+
+    Invariants honored:
+
+    * ``content`` is ALWAYS a non-empty string (strict validators — LM
+      Studio, OpenAI — reject ``content: null``/empty assistants with no
+      tool_calls).
+    * The assistant NEVER carries ``tool_calls`` (pairing invariant: the
+      next message is a user message, not a tool response). In-flight tool
+      fragments are folded into the content as visible text instead.
+    * The full partial reasoning is preserved verbatim in the assistant
+      message (reasoning channel); the last-N-chars truncation applies
+      ONLY to the pointer quoted inside the user message.
+    * The block ends with a user message — mandatory for models that
+      refuse to generate after an assistant-final payload.
+    """
+    if partial is None:
+        return None
+    reasoning = str(getattr(partial, "reasoning", "") or "")
+    text = str(getattr(partial, "text", "") or "")
+    details = getattr(partial, "reasoning_details", None)
+    folded = _fold_partial_tool_calls(getattr(partial, "tool_state", None))
+
+    tail_source = text or folded or reasoning
+    if not tail_source.strip():
+        # Nothing the model produced survives — identical replay is correct.
+        return None
+
+    effective_tail = max(1, int(tail_chars))
+    tail = tail_source[-effective_tail:]
+    tail_marker = "…" if len(tail_source) > len(tail) else ""
+
+    if text.strip():
+        content = text
+    elif folded.strip():
+        content = folded
+    else:
+        # Died mid-reasoning with no visible output: quote the reasoning
+        # tail as content so the assistant message is non-empty (strict
+        # validators) and the model can see its own stopping point.
+        content = tail
+
+    assistant_msg: dict[str, Any] = {"role": "assistant", "content": content}
+    if isinstance(details, list) and details:
+        assistant_msg["reasoning_details"] = details
+    elif reasoning:
+        assistant_msg["reasoning"] = reasoning
+
+    user_msg = {
+        "role": "user",
+        "content": _STREAM_RESUME_USER_TEMPLATE.format(
+            tail_chars=effective_tail,
+            tail=tail_marker + tail,
+        ),
+    }
+    return [assistant_msg, user_msg]
+
+
 async def run_single_turn(
     adapter: ProviderAdapter,
     request: ProviderRequest,
@@ -251,81 +463,137 @@ async def run_single_turn(
     show_thinking: bool = True,
     show_full: bool = True,
     reasoning_char_budget: int = 0,
+    stream_retry_attempts: int = FALLBACK_STREAM_RETRY_ATTEMPTS,
+    stream_retry_backoff_seconds: float = FALLBACK_STREAM_RETRY_BACKOFF_SECONDS,
+    stream_resume_enabled: bool = FALLBACK_STREAM_RESUME_ENABLED,
+    stream_resume_tail_chars: int = FALLBACK_STREAM_RESUME_TAIL_CHARS,
 ) -> TurnResult:
     # Easter Egg: Add demon emoji if model is uncensored/nsfw
     if any(k in request.model.lower() for k in ["uncensored", "uncensor", "abliterated", "obliterated", "nsfw"]) and "😈" not in request.model:
         request.model += " 😈"
 
+    stream_retries = max(0, int(stream_retry_attempts))
+    stream_backoff = max(0.0, float(stream_retry_backoff_seconds))
+    # Pristine conversation kept so every resume rebuilds from the ORIGINAL
+    # payload + only the LATEST continuation block (older failed attempts
+    # are superseded by the newest partial — no accumulation bloat).
+    base_conversation_messages = request.conversation_messages
     result = TurnResult()
     render_state = StreamRenderState()
     _tool_call_header_shown: set[int] = set()
     reasoning_chars = 0
     reasoning_budget_tripped = False
 
-    stream = adapter.stream_turn(request)
-    try:
-        async for event in stream:
-            if event.type == "reasoning_delta":
-                text = str(event.payload.get("text", ""))
-                details = event.payload.get("details") or []
-                if text:
-                    result.reasoning += text
-                    reasoning_chars += len(text)
-                    if show_thinking:
-                        if not render_state.reasoning_started:
-                            _write_meta(render_state, "\x1b[2mthinking:\x1b[0m ", ends_on_newline=False)
-                            render_state.reasoning_started = True
-                        # Verbatim: whatever the provider sent, print it as-is
-                        # inside the dim-style envelope. No regex, no dedup.
-                        _stream_chunk(render_state, text, ansi_prefix="\x1b[2m", ansi_suffix="\x1b[0m")
-                if isinstance(details, list):
-                    for detail in details:
-                        if isinstance(detail, dict):
-                            result.reasoning_details.append(detail)
-                if reasoning_char_budget and reasoning_chars >= reasoning_char_budget:
-                    reasoning_budget_tripped = True
-                    break
-            elif event.type == "text_delta":
-                text = str(event.payload.get("text", ""))
-                result.text += text
-                if text:
-                    if show_thinking and render_state.reasoning_started and not render_state.text_started:
-                        # At most one blank line between reasoning and final text,
-                        # regardless of how many trailing "\n" the reasoning carried.
-                        _ensure_fresh_line(render_state)
-                        _write_meta(render_state, "\n", ends_on_newline=True)
-                    render_state.text_started = True
-                    _stream_chunk(render_state, text)
-            elif event.type == "tool_call":
-                tool_calls = event.payload.get("tool_calls") or []
-                result.tool_calls.extend(tool_calls)
-                if show_full:
-                    for tool_delta in tool_calls:
-                        index = int(tool_delta.get("index", 0))
-                        func = tool_delta.get("function") or {}
-                        name = func.get("name", "")
-                        args_chunk = func.get("arguments", "")
-                        if name and index not in _tool_call_header_shown:
-                            _tool_call_header_shown.add(index)
-                            # Guarantee the header starts on a fresh line without
-                            # stacking on top of trailing newlines from reasoning.
-                            _ensure_fresh_line(render_state)
-                            _write_meta(render_state, f"\x1b[2mtool_call: {name}(\x1b[0m", ends_on_newline=False)
-                        if args_chunk:
-                            _stream_chunk(render_state, args_chunk)
-            elif event.type == "usage":
-                usage = event.payload.get("usage") or {}
-                if isinstance(usage, dict):
-                    _replace_usage_snapshot(result.usage, usage)
-                    _store_latest_usage_snapshot(result.usage, usage)
-            elif event.type == "error":
-                raise RuntimeError(str(event.payload.get("message", "Unknown provider error")))
-            elif event.type == "finished":
-                finish_reason = event.payload.get("finish_reason", "")
-                if finish_reason:
-                    result.finished_reason = finish_reason
-    finally:
-        await stream.aclose()
+    for stream_attempt in range(stream_retries + 1):
+        # Reset every accumulator for the new attempt: a killed attempt's
+        # partial deltas are discarded — the identical request is replayed
+        # and the model regenerates the round from its stable prefix
+        # (the prompt cache still hits, so the replay is cheap).
+        result = TurnResult()
+        render_state = StreamRenderState()
+        _tool_call_header_shown = set()
+        reasoning_chars = 0
+        reasoning_budget_tripped = False
+        tool_state: dict[int, dict[str, Any]] = {}
+        try:
+            stream = adapter.stream_turn(request)
+            try:
+                async for event in stream:
+                    if event.type == "reasoning_delta":
+                        text = str(event.payload.get("text", ""))
+                        details = event.payload.get("details") or []
+                        if text:
+                            result.reasoning += text
+                            reasoning_chars += len(text)
+                            if show_thinking:
+                                if not render_state.reasoning_started:
+                                    _write_meta(render_state, "\x1b[2mthinking:\x1b[0m ", ends_on_newline=False)
+                                    render_state.reasoning_started = True
+                                # Verbatim: whatever the provider sent, print it as-is
+                                # inside the dim-style envelope. No regex, no dedup.
+                                _stream_chunk(render_state, text, ansi_prefix="\x1b[2m", ansi_suffix="\x1b[0m")
+                        if isinstance(details, list):
+                            for detail in details:
+                                if isinstance(detail, dict):
+                                    result.reasoning_details.append(detail)
+                        if reasoning_char_budget and reasoning_chars >= reasoning_char_budget:
+                            reasoning_budget_tripped = True
+                            break
+                    elif event.type == "text_delta":
+                        text = str(event.payload.get("text", ""))
+                        result.text += text
+                        if text:
+                            if show_thinking and render_state.reasoning_started and not render_state.text_started:
+                                # At most one blank line between reasoning and final text,
+                                # regardless of how many trailing "\n" the reasoning carried.
+                                _ensure_fresh_line(render_state)
+                                _write_meta(render_state, "\n", ends_on_newline=True)
+                            render_state.text_started = True
+                            _stream_chunk(render_state, text)
+                    elif event.type == "tool_call":
+                        tool_calls = event.payload.get("tool_calls") or []
+                        result.tool_calls.extend(tool_calls)
+                        for tool_delta in tool_calls:
+                            _merge_tool_call_delta(tool_state, tool_delta)
+                        if show_full:
+                            for tool_delta in tool_calls:
+                                index = int(tool_delta.get("index", 0))
+                                func = tool_delta.get("function") or {}
+                                name = func.get("name", "")
+                                args_chunk = func.get("arguments", "")
+                                if name and index not in _tool_call_header_shown:
+                                    _tool_call_header_shown.add(index)
+                                    # Guarantee the header starts on a fresh line without
+                                    # stacking on top of trailing newlines from reasoning.
+                                    _ensure_fresh_line(render_state)
+                                    _write_meta(render_state, f"\x1b[2mtool_call: {name}(\x1b[0m", ends_on_newline=False)
+                                if args_chunk:
+                                    _stream_chunk(render_state, args_chunk)
+                    elif event.type == "usage":
+                        usage = event.payload.get("usage") or {}
+                        if isinstance(usage, dict):
+                            _replace_usage_snapshot(result.usage, usage)
+                            _store_latest_usage_snapshot(result.usage, usage)
+                    elif event.type == "error":
+                        raise UpstreamStreamError(str(event.payload.get("message", "Unknown provider error")))
+                    elif event.type == "finished":
+                        finish_reason = event.payload.get("finish_reason", "")
+                        if finish_reason:
+                            result.finished_reason = finish_reason
+            finally:
+                await stream.aclose()
+            break
+        except UpstreamStreamError as exc:
+            if stream_attempt >= stream_retries or not exc.retryable:
+                raise
+            if exc.partial is None:
+                # Capture what THIS killed attempt had already produced so
+                # the retry can resume from it instead of restarting.
+                exc.partial = PartialRoundState(
+                    reasoning=result.reasoning,
+                    reasoning_details=result.reasoning_details,
+                    text=result.text,
+                    tool_state=tool_state,
+                    usage=result.usage,
+                    finished_reason=result.finished_reason,
+                )
+            resume_block = None
+            if stream_resume_enabled:
+                resume_block = _build_continuation_block(exc.partial, stream_resume_tail_chars)
+            delay = min(stream_backoff * (2 ** stream_attempt), _STREAM_RETRY_BACKOFF_CAP_SECONDS)
+            _notify_stream_retry(
+                exc,
+                attempt=stream_attempt + 1,
+                max_attempts=stream_retries + 1,
+                delay=delay,
+                resuming=resume_block is not None,
+            )
+            await asyncio.sleep(delay)
+            if resume_block:
+                request = replace(
+                    request,
+                    conversation_messages=[*base_conversation_messages, *resume_block],
+                )
 
     if reasoning_budget_tripped:
         _ensure_fresh_line(render_state)
@@ -344,6 +612,13 @@ async def run_single_turn(
             f"Increase `max_output_tokens` in your provider config for longer responses.\x1b[0m\n",
             ends_on_newline=True,
         )
+
+    if (
+        result.finished_reason in _UNSAFE_FINISH_REASONS
+        and not result.text
+        and not result.tool_calls
+    ):
+        _print_content_filter_refusal(console, result.finished_reason)
 
     if result.text or (show_thinking and render_state.reasoning_started):
         _ensure_fresh_line(render_state)
@@ -402,6 +677,10 @@ async def run_tool_loop(
                 runtime.config.tools.reasoning_char_budget,
                 runtime.config.tools.delegated_reasoning_char_budget,
             ),
+            stream_retry_attempts=runtime.config.tools.stream_retry_attempts,
+            stream_retry_backoff_seconds=runtime.config.tools.stream_retry_backoff_seconds,
+            stream_resume_enabled=runtime.config.tools.stream_resume_enabled,
+            stream_resume_tail_chars=runtime.config.tools.stream_resume_tail_chars,
         )
         # SoT Step 6: Clean — save assistant response to permanent history.
         # reasoning_details are consolidated before persisting: streaming
@@ -422,6 +701,9 @@ async def run_tool_loop(
     executed_any_tool = False
     previous_round_fingerprint: tuple[RoundObservation, ...] | None = None
     repeated_round_count = 0
+    # Bounded auto-continue counter for the "model stopped after tools
+    # without a final reply" case (see _EMPTY_REPLY_AUTO_CONTINUE_MAX).
+    empty_reply_continues = 0
     _tools_cfg = runtime.config.tools
     if max_rounds is None:
         max_rounds = _tools_cfg.max_rounds
@@ -496,32 +778,76 @@ async def run_tool_loop(
         # above), so the Status `text` argument is intentionally empty —
         # otherwise Rich would render the text AFTER the robot and break
         # the "Processing prompt: [robot]" order the user wants.
-        prompt_status = console.status(
-            "",
-            spinner="sot_robot",
-            spinner_style="bold bright_cyan",
-        )
-        if round_request.stream:
-            prompt_status.start()
+        # ── Upstream stream retry ──
+        # Transient upstream stream failures (OpenRouter's injected
+        # "[502] JSON error injected into SSE stream", dropped SSE
+        # connections, 5xx at stream-open) are retried here instead of
+        # aborting the whole turn: nothing has been persisted for THIS
+        # round yet (no chat_history mutation, no tools executed, SoT
+        # unchanged), so replaying the identical request is safe and
+        # cheap — the prompt cache still hits on the unchanged prefix.
+        # See UpstreamStreamError in providers/base.py.
+        stream_retry_attempts = max(0, int(_tools_cfg.stream_retry_attempts))
+        stream_retry_backoff = max(0.0, float(_tools_cfg.stream_retry_backoff_seconds))
+        resume_enabled = bool(_tools_cfg.stream_resume_enabled)
+        resume_tail_chars = int(_tools_cfg.stream_resume_tail_chars)
+        # Pristine per-round conversation: every resume rebuilds from this
+        # plus ONLY the latest continuation block (a newer partial supersedes
+        # the older one — no accumulation of failed attempts).
+        base_round_messages = list(round_request.conversation_messages)
+        completion = None
+        for stream_attempt in range(stream_retry_attempts + 1):
+            prompt_status = console.status(
+                "",
+                spinner="sot_robot",
+                spinner_style="bold bright_cyan",
+            )
             try:
-                completion = await _run_streaming_round(
-                    adapter,
-                    round_request,
-                    console,
-                    show_thinking=runtime.config.tools.show_thinking,
-                    show_full=runtime.config.tools.show_full,
-                    reasoning_char_budget=_effective_reasoning_char_budget(
-                        request,
-                        runtime.config.tools.reasoning_char_budget,
-                        runtime.config.tools.delegated_reasoning_char_budget,
-                    ),
-                    prompt_status=prompt_status,
+                if round_request.stream:
+                    prompt_status.start()
+                    try:
+                        completion = await _run_streaming_round(
+                            adapter,
+                            round_request,
+                            console,
+                            show_thinking=runtime.config.tools.show_thinking,
+                            show_full=runtime.config.tools.show_full,
+                            reasoning_char_budget=_effective_reasoning_char_budget(
+                                request,
+                                runtime.config.tools.reasoning_char_budget,
+                                runtime.config.tools.delegated_reasoning_char_budget,
+                            ),
+                            prompt_status=prompt_status,
+                        )
+                    finally:
+                        prompt_status.stop()
+                else:
+                    with prompt_status:
+                        completion = await adapter.complete_turn(round_request)
+                break
+            except UpstreamStreamError as exc:
+                if stream_attempt >= stream_retry_attempts or not exc.retryable:
+                    raise
+                resume_block = None
+                if resume_enabled:
+                    resume_block = _build_continuation_block(exc.partial, resume_tail_chars)
+                delay = min(
+                    stream_retry_backoff * (2 ** stream_attempt),
+                    _STREAM_RETRY_BACKOFF_CAP_SECONDS,
                 )
-            finally:
-                prompt_status.stop()
-        else:
-            with prompt_status:
-                completion = await adapter.complete_turn(round_request)
+                _notify_stream_retry(
+                    exc,
+                    attempt=stream_attempt + 1,
+                    max_attempts=stream_retry_attempts + 1,
+                    delay=delay,
+                    resuming=resume_block is not None,
+                )
+                await asyncio.sleep(delay)
+                if resume_block:
+                    round_request = replace(
+                        round_request,
+                        conversation_messages=[*base_round_messages, *resume_block],
+                    )
 
         # ── Token limit check: abort tool loop if model was cut off ──
         if getattr(completion, "finished_reason", "") == "length":
@@ -557,16 +883,68 @@ async def run_tool_loop(
             _merge_usage_totals(result.usage, completion.usage)
             _store_latest_usage_snapshot(result.usage, completion.usage)
 
-        # ── No tool calls: turn is done ──
+        # ── No tool calls: turn would be done ──
         if not completion.tool_calls:
+            empty_reply = not (completion.text or "").strip()
+            finish_reason = getattr(completion, "finished_reason", "") or ""
+            if empty_reply and finish_reason in _UNSAFE_FINISH_REASONS:
+                # Upstream content-filter refusal (OpenRouter/Z.AI
+                # native_finish_reason="sensitive", OpenAI "content_filter").
+                # The stream completed gracefully but with ZERO content — the
+                # upstream's moderation system refused THIS payload. Nudging
+                # or replaying the same payload keeps failing identically, so
+                # surface a clear actionable explanation and stop.
+                result.text = completion.text
+                result.tool_calls = []
+                result.is_error = True
+                _print_content_filter_refusal(console, finish_reason)
+                from sot_cli.config.app import AppConfig
+                _cfg = AppConfig = runtime.config
+                if not is_task and _cfg.tools.play_finished_notification:
+                    _play_turn_done_sound(_cfg)
+
+                _save_final_request_payload(runtime, request, conversation_state, tools=round_request.tools)
+                return result
+
+            if (
+                executed_any_tool
+                and empty_reply
+                and empty_reply_continues < _EMPTY_REPLY_AUTO_CONTINUE_MAX
+            ):
+                empty_reply_continues += 1
+                console.print(
+                    f"[yellow]⚠ Model stopped after executing tools without a final reply — "
+                    f"auto-continuing ({empty_reply_continues}/{_EMPTY_REPLY_AUTO_CONTINUE_MAX})...[/yellow]"
+                )
+                # Synthetic nudge appended as a REAL user message: several
+                # models refuse to generate from a payload that ends in an
+                # assistant turn, and it also becomes the new active-turn
+                # boundary so the next round rebuilds cleanly (tool results
+                # and the freshly rebuilt SoT block still precede it).
+                conversation_state.chat_history.append({
+                    "role": "user",
+                    "content": _EMPTY_REPLY_CONTINUE_MESSAGE,
+                })
+                continue
+
             result.text = completion.text
             result.tool_calls = []
-            if executed_any_tool and not (completion.text or "").strip():
+            if executed_any_tool and empty_reply:
                 console.print(
                     "[bold yellow]Warning:[/bold yellow] The model stopped on its own after running tools, "
-                    "without writing any reply for you. Nothing was sent. "
+                    f"without writing any reply for you (auto-continue already tried "
+                    f"{_EMPTY_REPLY_AUTO_CONTINUE_MAX} time(s)). Nothing was sent. "
                     "To continue, send another prompt manually (for example: ask it to answer based on what it just read, "
                     "or tell it to keep going)."
+                )
+            elif empty_reply:
+                # Fresh turn (no tools executed) with a fully empty response:
+                # this used to end 100% silently — surface it.
+                console.print(
+                    "[bold yellow]Warning:[/bold yellow] The model returned an EMPTY response "
+                    f"(no text, no tool calls, finish_reason={finish_reason or 'none'}). "
+                    "If it repeats, this is usually an upstream moderation refusal or a provider "
+                    "quirk — try rephrasing, switching model/provider, or --hypercompress."
                 )
             if completion.text and not round_request.stream:
                 console.print(completion.text)
@@ -1421,11 +1799,24 @@ async def _run_streaming_round(
                 if isinstance(event_usage, dict):
                     _replace_usage_snapshot(usage, event_usage)
             elif event.type == "error":
-                raise RuntimeError(str(event.payload.get("message", "Unknown provider error")))
+                raise UpstreamStreamError(str(event.payload.get("message", "Unknown provider error")))
             elif event.type == "finished":
                 finish_reason = event.payload.get("finish_reason", "")
                 if finish_reason:
                     _stream_finished_reason = finish_reason
+    except UpstreamStreamError as exc:
+        # Preserve everything THIS killed attempt already produced so the
+        # turn-level retry can inject a continuation from where the model
+        # stopped instead of restarting the whole generation.
+        exc.partial = PartialRoundState(
+            reasoning="".join(reasoning_parts),
+            reasoning_details=reasoning_details,
+            text="".join(text_parts),
+            tool_state=tool_state,
+            usage=usage,
+            finished_reason=_stream_finished_reason,
+        )
+        raise
     finally:
         await stream.aclose()
 

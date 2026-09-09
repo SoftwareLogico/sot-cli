@@ -73,6 +73,10 @@ class ToolConfig:
     reasoning_char_budget: int = 0
     delegated_reasoning_char_budget: int = 4000
     compression_reasoning_trunc_chars: int = 240
+    stream_retry_attempts: int = 3
+    stream_retry_backoff_seconds: float = 2.0
+    stream_resume_enabled: bool = True
+    stream_resume_tail_chars: int = 400
     max_readable_file_tokens: int = 64000
 
 
@@ -262,6 +266,22 @@ def _parse_app_config(raw: dict[str, Any], keys_raw: dict[str, Any] | None = Non
                 tools_raw.get("compression_reasoning_trunc_chars", 240),
                 "tools.compression_reasoning_trunc_chars",
             ),
+            stream_retry_attempts=_parse_non_negative_int(
+                tools_raw.get("stream_retry_attempts", 3),
+                "tools.stream_retry_attempts",
+            ),
+            stream_retry_backoff_seconds=_parse_non_negative_float(
+                tools_raw.get("stream_retry_backoff_seconds", 2.0),
+                "tools.stream_retry_backoff_seconds",
+            ),
+            stream_resume_enabled=_parse_bool(
+                tools_raw.get("stream_resume_enabled", True),
+                "tools.stream_resume_enabled",
+            ),
+            stream_resume_tail_chars=_parse_non_negative_int(
+                tools_raw.get("stream_resume_tail_chars", 400),
+                "tools.stream_resume_tail_chars",
+            ),
             max_readable_file_tokens=_parse_non_negative_int(
                 tools_raw.get("max_readable_file_tokens", 64000),
                 "tools.max_readable_file_tokens",
@@ -322,6 +342,18 @@ def _parse_non_negative_int(value: Any, field_name: str) -> int:
         raise ConfigError(f"{field_name} must be a non-negative integer") from exc
     if normalized < 0:
         raise ConfigError(f"{field_name} must be a non-negative integer")
+    return normalized
+
+
+def _parse_non_negative_float(value: Any, field_name: str) -> float:
+    if isinstance(value, bool):
+        raise ConfigError(f"{field_name} must be a non-negative number")
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{field_name} must be a non-negative number") from exc
+    if normalized < 0 or normalized != normalized:  # second check rejects NaN
+        raise ConfigError(f"{field_name} must be a non-negative number")
     return normalized
 
 
