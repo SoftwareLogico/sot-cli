@@ -63,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
     normalized_argv = _normalize_argv_for_default_prompt(argv)
     parser = _build_parser()
     args = parser.parse_args(normalized_argv)
+    if getattr(args, "no_replay", False):
+        os.environ["SOT_NO_REPLAY"] = "1"
 
     try:
         return _dispatch(args)
@@ -263,7 +265,20 @@ def _debug_log(session_dir: Path, msg: str) -> None:
 
 
 def _replay_conversation(history: list[dict[str, Any]], session_dir: Path | None = None) -> None:
-    console.print("[dim]─── session history ───[/dim]")
+    # OWNER FIX 2026-09-18: el replay de sesiones con outputs de tool gigantes
+    # tardaba minutos (rich partida de grafemas sobre strings de MB) y parecia
+    # congelado (Ctrl+C al cargar). Cap de display + --no_replay para resume
+    # instantaneo. El historial REAL sigue intacto en el JSON de la sesion.
+    if os.environ.get("SOT_NO_REPLAY"):
+        console.print("[dim]--- session history skipped (--no_replay) ---[/dim]")
+        return
+    _CAP = 400
+
+    def _short(s: str) -> str:
+        s = str(s)
+        return s if len(s) <= _CAP else s[:_CAP] + f" ... [+{len(s) - _CAP} chars]"
+
+    console.print("[dim]--- session history ---[/dim]")
     if session_dir:
         _debug_log(session_dir, f"Replaying {len(history)} messages")
     for msg in history:
@@ -274,7 +289,7 @@ def _replay_conversation(history: list[dict[str, Any]], session_dir: Path | None
             if role == "user":
                 content = msg.get("content", "")
                 if isinstance(content, str):
-                    console.print(f"[bold cyan]you>[/bold cyan] {escape(content)}")
+                    console.print(f"[bold cyan]you>[/bold cyan] {escape(_short(content))}")
             elif role == "assistant":
                 text = msg.get("content") or ""
                 tool_calls = msg.get("tool_calls", [])
@@ -282,11 +297,11 @@ def _replay_conversation(history: list[dict[str, Any]], session_dir: Path | None
                     names = [tc.get("function", {}).get("name", "?") for tc in tool_calls]
                     console.print(f"[blue]assistant>[/blue] [dim]called {escape(', '.join(names))}[/dim]")
                 if isinstance(text, str) and text:
-                    console.print(f"[blue]assistant>[/blue] {escape(text)}")
+                    console.print(f"[blue]assistant>[/blue] {escape(_short(text))}")
             elif role == "tool":
                 raw = msg.get("content", "")
                 tool_text = str(raw) if not isinstance(raw, str) else raw
-                console.print(f"[dim]tool> {escape(tool_text)}[/dim]")
+                console.print(f"[dim]tool> {escape(_short(tool_text))}[/dim]")
         except Exception:
             # Fallback to plain print if rich rendering fails on complex/malformed unicode
             try:
@@ -1160,6 +1175,8 @@ Examples:
     # ── Interactive session ──
     parser.add_argument("--prompt", "-p", nargs="?", const=True, default=None, metavar="TEXT", help="Start an interactive session (optional initial prompt)")
     parser.add_argument("--session", metavar="SESSION_ID", default=None, help="Resume an existing session by ID")
+    parser.add_argument("--no_replay", action="store_true",
+                        help="Skip session history replay on resume (instant load)")
     parser.add_argument("--title", default=None, help="Title for the new session")
     parser.add_argument("--provider", choices=_PROVIDER_CHOICES, default=None)
     parser.add_argument("--model", default=None)
