@@ -1,18 +1,31 @@
 """
-Browser tools for sot-cli — Powered by browser-use 0.12.5 (Playwright-based).
+Browser tools for sot-cli — Powered by browser-use 0.12.5 (CDP-based).
 
 sot-cli is the brain. browser-use is just the hands and eyes.
-Uses Browser + BrowserConfig + BrowserContext + Playwright pages.
+Uses BrowserSession + BrowserProfile + actor Page (pure CDP — no Playwright).
+
+Migration notes (browser-use 0.11.x → 0.12.5):
+- Browser/BrowserConfig        → BrowserSession/BrowserProfile
+- browser.get_playwright_browser() + browser.new_context() → session.start()
+- context.get_current_page()   → session.get_current_page() (actor Page, CDP)
+- page.title()/page.url        → session.get_current_page_title()/get_current_page_url()
+- page.mouse.click/wheel       → (await page.mouse).click/scroll
+- page.keyboard.type/press     → CDP Input.dispatchKeyEvent / page.press
+- context.create_new_tab()     → session.navigate_to(url, new_tab=True)
+- context.get_tabs_info()      → session.get_tabs() → list[TabInfo]
+- context.switch_to_tab()      → event_bus.dispatch(SwitchTabEvent(target_id=...))
+- browser/context.close()      → session.kill()
 """
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
+import os
+import subprocess
 import sys
 import threading
+import time
 import traceback
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("sot.browser")
@@ -55,19 +68,127 @@ def _run_async(coro):
     return future.result(timeout=120)
 
 
+def _kill_stale_instances(exe_path: str) -> int:
+    """Kill any running instance of the target browser executable before launching.
+
+    Chromium browsers allow a single instance per user-data-dir (SingletonLock).
+    A stale instance (left open by a previous or aborted session) silently swallows
+    the launch command line: the new process exits immediately without printing the
+    "DevTools listening on ws://..." line, so browser-use's on_BrowserLaunchEvent
+    handler hangs until the 30s event-bus timeout and browser_open fails — leaving
+    windows open that no session can control. Killing stale instances first keeps
+    the launch handshake deterministic.
+    """
+    if sys.platform == "win32":
+        name = os.path.basename(exe_path)
+        try:
+            probe = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {name}"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except Exception:
+            return 0
+        if probe.returncode != 0 or name.lower() not in probe.stdout.lower():
+            return 0
+        logger.info(f"Killing stale {name} instance(s) before launch")
+        subprocess.run(["taskkill", "/F", "/IM", name], capture_output=True, timeout=10)
+        time.sleep(1.0)
+        return 1
+
+    try:
+        probe = subprocess.run(
+            ["pgrep", "-f", exe_path], capture_output=True, text=True, timeout=5
+        )
+    except Exception:
+        return 0
+    pids = [ln.strip() for ln in probe.stdout.splitlines() if ln.strip()]
+    if not pids:
+        return 0
+
+    logger.info(f"Killing {len(pids)} stale browser instance(s): {', '.join(pids)}")
+    subprocess.run(["pkill", "-f", exe_path], capture_output=True, timeout=5)
+    for _ in range(10):
+        check = subprocess.run(
+            ["pgrep", "-f", exe_path], capture_output=True, text=True, timeout=5
+        )
+        if not check.stdout.strip():
+            break
+        time.sleep(0.5)
+    else:
+        logger.warning("Stale instances survived SIGTERM; sending SIGKILL")
+        subprocess.run(["pkill", "-9", "-f", exe_path], capture_output=True, timeout=5)
+        time.sleep(0.5)
+    return len(pids)
+
+
 # Global state
-_browser: Any = None  # browser_use.Browser (0.12.x)
-_context: Any = None  # browser_use.BrowserContext
+_session: Any = None  # browser_use.BrowserSession (0.12.5)
 
 
 async def _get_page():
-    """Get the current Playwright Page from the BrowserContext."""
-    if not _context:
+    """Get the current browser_use actor Page (CDP) from the session."""
+    if not _session:
         return None
     try:
-        return await _context.get_current_page()
+        return await _session.get_current_page()
     except Exception:
         return None
+
+
+async def _page_meta() -> dict[str, str]:
+    """Fast title/url from the session's cached target info (no CDP roundtrip)."""
+    if not _session:
+        return {"title": "", "url": ""}
+    try:
+        title = await _session.get_current_page_title()
+    except Exception:
+        title = ""
+    try:
+        url = await _session.get_current_page_url()
+    except Exception:
+        url = ""
+    return {"title": title, "url": url}
+
+
+async def _dispatch_event(event) -> None:
+    """Dispatch a browser_use event on the session bus and propagate handler errors."""
+    ev = _session.event_bus.dispatch(event)
+    await ev
+    await ev.event_result(raise_if_any=True, raise_if_none=False)
+
+
+async def _enforce_window(window_size: dict[str, int], window_position: dict[str, int] | None) -> None:
+    """Force the browser window into a normal (not maximized/minimized) state with the
+    requested size via CDP Browser.setWindowBounds.
+
+    macOS/Brave session restore can override the --window-size CLI flag on launch;
+    this re-asserts the geometry after the session is up, so the window always ends
+    up normal-sized regardless of restored state.
+    """
+    if not _session:
+        return
+    try:
+        cdp = await _session.get_or_create_cdp_session()
+        result = await cdp.cdp_client.send_raw(
+            "Browser.getWindowForTarget", {}, session_id=cdp.session_id
+        )
+        window_id = result["windowId"]
+        bounds: dict[str, Any] = {
+            "windowState": "normal",
+            "width": int(window_size["width"]),
+            "height": int(window_size["height"]),
+        }
+        if window_position:
+            bounds["left"] = int(window_position["width"])  # CDP: left = x
+            bounds["top"] = int(window_position["height"])  # CDP: top = y
+        await cdp.cdp_client.send_raw(
+            "Browser.setWindowBounds",
+            {"windowId": window_id, "bounds": bounds},
+            session_id=cdp.session_id,
+        )
+        logger.info(f"Window bounds set: {bounds}")
+    except Exception as exc:
+        logger.debug(f"Window bounds enforcement skipped: {exc}")
 
 
 # ──────────────────────────────────────────────────────
@@ -78,26 +199,27 @@ def execute_browser_open(arguments: dict[str, Any]) -> dict[str, Any]:
     url = arguments.get("url", "")
     logger.info(f"browser_open called: profile={profile!r} url={url!r}")
 
+    # Window geometry: open a normal windowed browser (not maximized/minimized).
+    # browser-use emits --start-maximized by default when window_size is unset;
+    # passing window_size emits --window-size=W,H instead.
+    window_size = arguments.get("window_size") or {"width": 1280, "height": 720}
+    window_position = arguments.get("window_position")  # optional {"width": x, "height": y}
+    window_kwargs: dict[str, Any] = {"window_size": window_size}
+    if window_position:
+        window_kwargs["window_position"] = window_position
+
     async def _open():
-        global _browser, _context
+        global _session
 
-        # Close existing context/browser
-        if _context is not None:
+        # Close existing session (kills browser process + resets state)
+        if _session is not None:
             try:
-                await _context.close()
+                await _session.kill()
             except Exception:
                 pass
-            _context = None
-        if _browser is not None:
-            try:
-                await _browser.close()
-            except Exception:
-                pass
-            _browser = None
+            _session = None
 
-        from browser_use import Browser, BrowserConfig
-
-        extra_args: list[str] = []
+        from browser_use import BrowserProfile, BrowserSession
 
         if profile != "fresh":
             from sot_cli.tools.browser.profiles import list_browser_profiles
@@ -113,47 +235,44 @@ def execute_browser_open(arguments: dict[str, Any]) -> dict[str, Any]:
                     f"Profile '{profile}' not found. Available: {[p['browser'] for p in profiles]}"
                 )
 
-            chrome_path = matched["exe"]
-            user_data = matched["user_data"]
-            profile_dir = matched["profile_dir"]
-
             logger.info(
-                f"Launching {matched['browser']}/{profile_dir} from {chrome_path}"
+                f"Launching {matched['browser']}/{matched['profile_dir']} from {matched['exe']}"
             )
 
-            extra_args.append(f"--user-data-dir={user_data}")
-            extra_args.append(f"--profile-directory={profile_dir}")
+            # Chromium single-instance rule: a stale instance blocks the CDP
+            # launch handshake (see _kill_stale_instances docstring).
+            _kill_stale_instances(matched["exe"])
 
-            config = BrowserConfig(
+            # Real user profile: browser-use passes --user-data-dir and
+            # --profile-directory itself (get_args()). For Brave it does NOT
+            # copy the profile to a temp dir (that only happens for Chrome),
+            # so cookies/logins are real and persistent.
+            browser_profile = BrowserProfile(
                 headless=False,
-                browser_binary_path=chrome_path,
-                extra_browser_args=extra_args,
+                executable_path=matched["exe"],
+                user_data_dir=matched["user_data"],
+                profile_directory=matched["profile_dir"],
+                **window_kwargs,
             )
         else:
-            config = BrowserConfig(
-                headless=False,
-            )
+            browser_profile = BrowserProfile(headless=False, **window_kwargs)
 
-        _browser = Browser(config=config)
+        _session = BrowserSession(browser_profile=browser_profile)
+        await _session.start()
 
-        # browser-use 0.12.5: launch the process + create a Playwright context
-        pw = await _browser.get_playwright_browser()
-        _context = await _browser.new_context()
+        # Re-assert window geometry: macOS/Brave session restore can override
+        # the --window-size CLI flag; CDP setWindowBounds is the final word.
+        await _enforce_window(window_size, window_position)
 
+        # Ensure a tab exists; navigate if a URL was requested.
         page = await _get_page()
         if page is None:
-            raise RuntimeError("Browser opened but could not get a page.")
+            await _session.navigate_to(url or "about:blank")
+        elif url:
+            await _session.navigate_to(url)
 
-        # Navigation — best-effort (Brave shields, etc. may throw)
-        if url:
-            try:
-                await page.goto(url)
-                await page.wait_for_load_state()
-            except Exception:
-                pass
-
-        title = await page.title()
-        page_url = page.url
+        title = await _session.get_current_page_title()
+        page_url = await _session.get_current_page_url()
         return {"title": title, "url": page_url}
 
     try:
@@ -173,14 +292,11 @@ def execute_browser_navigate(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": "url is required"}
 
     async def _nav():
-        page = await _get_page()
-        if not page:
+        if not _session:
             return None
-        await page.goto(url)
-        await page.wait_for_load_state()
-        title = await page.title()
-        page_url = page.url
-        return {"title": title, "url": page_url}
+        # navigate_to() handles tab reuse/creation and waits for page readiness.
+        await _session.navigate_to(url)
+        return await _page_meta()
 
     try:
         result = _run_async(_nav())
@@ -198,19 +314,15 @@ def execute_browser_screenshot(arguments: dict[str, Any]) -> dict[str, Any]:
     full_page = arguments.get("full_page", False)
 
     async def _screenshot():
-        page = await _get_page()
-        if not page:
+        if not _session:
             return None
-        screenshot_bytes = await page.screenshot(full_page=full_page, animations="disabled")
+        screenshot_bytes = await _session.take_screenshot(full_page=full_page)
         path = "/tmp/sot_browser_screenshot.png"
         with open(path, "wb") as f:
             f.write(screenshot_bytes)
-        title = await page.title()
-        page_url = page.url
         logger.info(f"Screenshot saved: {path} ({len(screenshot_bytes)} bytes)")
         return {
-            "title": title,
-            "url": page_url,
+            **await _page_meta(),
             "screenshot_path": path,
             "size_bytes": len(screenshot_bytes),
         }
@@ -237,15 +349,11 @@ def execute_browser_click(arguments: dict[str, Any]) -> dict[str, Any]:
         page = await _get_page()
         if not page:
             return None
-        await page.mouse.click(x, y)
+        mouse = await page.mouse
+        await mouse.move(x, y)  # hover state before pressing
+        await mouse.click(x, y)
         await asyncio.sleep(0.5)
-        title = await page.title()
-        page_url = page.url
-        return {
-            "title": title,
-            "url": page_url,
-            "clicked": {"x": x, "y": y},
-        }
+        return {**await _page_meta(), "clicked": {"x": x, "y": y}}
 
     try:
         result = _run_async(_click())
@@ -269,10 +377,21 @@ def execute_browser_type(arguments: dict[str, Any]) -> dict[str, Any]:
         page = await _get_page()
         if not page:
             return None
-        # Playwright keyboard.type with 50ms delay between keystrokes
-        await page.keyboard.type(text, delay=50)
+        # Real per-character key events via CDP (equivalent to Playwright's
+        # keyboard.type with delay): keyDown(text=ch) + keyUp per character.
+        cdp = await _session.get_or_create_cdp_session()
+        for ch in text:
+            await cdp.cdp_client.send.Input.dispatchKeyEvent(
+                {"type": "keyDown", "key": ch, "text": ch, "unmodifiedText": ch},
+                session_id=cdp.session_id,
+            )
+            await cdp.cdp_client.send.Input.dispatchKeyEvent(
+                {"type": "keyUp", "key": ch},
+                session_id=cdp.session_id,
+            )
+            await asyncio.sleep(0.05)  # 50ms between keystrokes
         if press_enter:
-            await page.keyboard.press("Enter")
+            await page.press("Enter")
             await asyncio.sleep(0.5)
         return {"typed": text, "pressed_enter": press_enter}
 
@@ -297,7 +416,7 @@ def execute_browser_key(arguments: dict[str, Any]) -> dict[str, Any]:
         page = await _get_page()
         if not page:
             return None
-        await page.keyboard.press(key)
+        await page.press(key)
         return {"pressed": key}
 
     try:
@@ -321,14 +440,12 @@ def execute_browser_scroll(arguments: dict[str, Any]) -> dict[str, Any]:
         if not page:
             return None
         delta = amount if direction == "down" else -amount
-        # Playwright mouse.wheel(delta_y=...)
-        await page.mouse.wheel(delta_y=delta)
+        mouse = await page.mouse
+        # CDP mouse wheel with synthesizeScrollGesture + JS fallbacks built in
+        await mouse.scroll(delta_y=delta)
         await asyncio.sleep(0.3)
-        title = await page.title()
-        page_url = page.url
         return {
-            "title": title,
-            "url": page_url,
+            **await _page_meta(),
             "scrolled": {"direction": direction, "amount": amount},
         }
 
@@ -353,11 +470,8 @@ def execute_browser_get_html(arguments: dict[str, Any]) -> dict[str, Any]:
             return None
         content = await page.evaluate("() => document.documentElement.outerHTML")
         truncated = content[:max_length] if len(content) > max_length else content
-        title = await page.title()
-        page_url = page.url
         return {
-            "title": title,
-            "url": page_url,
+            **await _page_meta(),
             "html": truncated,
             "total_length": len(content),
         }
@@ -388,11 +502,8 @@ def execute_browser_get_text(arguments: dict[str, Any]) -> dict[str, Any]:
         with open(text_path, "w", encoding="utf-8") as f:
             f.write(content)
 
-        title = await page.title()
-        page_url = page.url
         return {
-            "title": title,
-            "url": page_url,
+            **await _page_meta(),
             "text_file_path": text_path,
             "total_length": len(content),
         }
@@ -416,9 +527,7 @@ def execute_browser_back(arguments: dict[str, Any]) -> dict[str, Any]:
             return None
         await page.go_back()
         await asyncio.sleep(0.5)
-        title = await page.title()
-        page_url = page.url
-        return {"title": title, "url": page_url}
+        return await _page_meta()
 
     try:
         result = _run_async(_back())
@@ -439,9 +548,7 @@ def execute_browser_forward(arguments: dict[str, Any]) -> dict[str, Any]:
             return None
         await page.go_forward()
         await asyncio.sleep(0.5)
-        title = await page.title()
-        page_url = page.url
-        return {"title": title, "url": page_url}
+        return await _page_meta()
 
     try:
         result = _run_async(_forward())
@@ -459,13 +566,17 @@ def execute_browser_tab_new(arguments: dict[str, Any]) -> dict[str, Any]:
     url = arguments.get("url", "")
 
     async def _new_tab():
-        if not _context:
+        if not _session:
             return None
-        await _context.create_new_tab(url=url if url else None)
-        page = await _get_page()
-        title = await page.title()
-        page_url = page.url
-        return {"title": title, "url": page_url}
+        if url:
+            # Creates a new tab, navigates it and switches focus to it.
+            await _session.navigate_to(url, new_tab=True)
+        else:
+            # SwitchTabEvent(target_id=None) creates a blank tab and focuses it.
+            from browser_use.browser.events import SwitchTabEvent
+
+            await _dispatch_event(SwitchTabEvent(target_id=None))
+        return await _page_meta()
 
     try:
         result = _run_async(_new_tab())
@@ -481,15 +592,16 @@ def execute_browser_tab_new(arguments: dict[str, Any]) -> dict[str, Any]:
 # ──────────────────────────────────────────────────────
 def execute_browser_tab_list(arguments: dict[str, Any]) -> dict[str, Any]:
     async def _list_tabs():
-        if not _context:
+        if not _session:
             return []
-        tabs_info = await _context.get_tabs_info()
+        tabs_info = await _session.get_tabs()
         tabs = []
-        for tab in tabs_info:
+        for i, tab in enumerate(tabs_info):
             tabs.append({
-                "index": tab.page_id,
+                "index": i,
                 "title": tab.title,
                 "url": tab.url,
+                "target_id": tab.target_id,
             })
         return tabs
 
@@ -507,13 +619,15 @@ def execute_browser_tab_switch(arguments: dict[str, Any]) -> dict[str, Any]:
     index = arguments.get("index", 0)
 
     async def _switch():
-        if not _context:
+        if not _session:
             return None
-        await _context.switch_to_tab(page_id=index)
-        page = await _get_page()
-        title = await page.title()
-        page_url = page.url
-        return {"title": title, "url": page_url}
+        from browser_use.browser.events import SwitchTabEvent
+
+        tabs_info = await _session.get_tabs()
+        if index < 0 or index >= len(tabs_info):
+            raise IndexError(f"Tab index {index} not found (0..{len(tabs_info) - 1}).")
+        await _dispatch_event(SwitchTabEvent(target_id=tabs_info[index].target_id))
+        return await _page_meta()
 
     try:
         result = _run_async(_switch())
@@ -531,24 +645,18 @@ def execute_browser_close(arguments: dict[str, Any]) -> dict[str, Any]:
     logger.info("browser_close called")
 
     async def _close():
-        global _browser, _context
-        if _context:
+        global _session
+        if _session:
             try:
-                await _context.close()
+                await _session.kill()
             except Exception:
                 pass
-            _context = None
-        if _browser:
-            try:
-                await _browser.close()
-            except Exception:
-                pass
-            _browser = None
+            _session = None
 
     try:
         loop = _ensure_loop()
         future = asyncio.run_coroutine_threadsafe(_close(), loop)
-        future.result(timeout=15)
+        future.result(timeout=30)
         return {"ok": True, "message": "Browser closed."}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
