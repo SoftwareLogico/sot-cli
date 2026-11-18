@@ -113,7 +113,7 @@ Supported flags:
 - `--provider <lmstudio|openrouter|openai|ollama|nvidia|bedrock>`: provider override.
 - `--model <name>`: model override.
 - `--no-tools`: disables tool loop (plain chat behavior).
-- `--hypercompress [PERCENT]`: collapse past tool turns into receipts before the session starts. `PERCENT` (1-100) is the share of the **oldest closed turns** to compress; omit for 100.
+- `--hypercompress [PERCENT]`: compress past tool chatter into receipts before the session starts. When `PERCENT` (1-100) is given, truncates the oldest `PERCENT`% of **closed turns** instead, archiving them to `hypercompress_archive.md`.
 - `--context_limit <tokens>`: override the context-limit denominator (see Global CLI flags).
 - `--no-media`: text-only session — no images, PDFs, audio or video are ever sent.
 - `--subagent_model <model>`: override the sub-agent model for delegated tasks.
@@ -544,12 +544,12 @@ The runtime compresses past tool activity between turns to save tokens. Two mech
 - The `reasoning` of tool-bearing assistant messages is truncated to `[tools].compression_reasoning_trunc_chars` chars (default 240).
 - Failed tool calls are never compressed. The active turn is never compressed.
 
-**Hyper-compression (on demand via `--hypercompress [PERCENT]`):**
+**Hyper-compression (on demand via `--hypercompress [PERCENT]`) — two distinct modes:**
 
-- Collapses past tool chatter into receipts. Nothing is lost about *what* happened: tool names, success/failure status and error descriptions survive; final assistant answers are kept verbatim.
-- **The unit is the TURN, not the message.** A turn starts at a real user prompt and ends right before the next one (it contains every `assistant`/`tool` message produced while serving it, including an assistant that emits several sub-tools). `PERCENT` (1-100) is the share of the **oldest** closed turns to compress: `K = round(closed_turns × PERCENT / 100)`, whole turns only, from the oldest forward. Omit `PERCENT` for 100%.
-- **It replaces `(assistant+tool_calls → tool)+` runs with one receipt** and keeps everything else verbatim and in order: user prompts, final answers, existing `SYSTEM MESSAGE:` receipts, the SoT block and the CURRENT METADATA block.
-- **Why the `write_file` / `edit_files` bodies are dropped:** once a file is created or edited, its resulting state is already in the `=== SOURCE OF TRUTH ===` block of every following turn. Keeping the full `arguments` payload (the `new_string` blocks, the whole `content`) in the history duplicates that state — staler and more expensive. The receipt keeps the *fact* (`t1 edit_files paths=… edits=3`) and drops the *payload*.
+- **`--hypercompress` (no value) — COMPRESS.** Collapses every past `(assistant+tool_calls → tool)+` run inside CLOSED turns into one compact receipt. Tool names, success/failure status and error descriptions survive; user prompts, final answers, existing `SYSTEM MESSAGE:` receipts, the SoT block and the CURRENT METADATA block stay verbatim. Chat-only turns are untouched. Nothing is lost about *what* happened.
+- **`--hypercompress PERCENT` (1-100) — TRUNCATE.** Removes the **oldest** closed turns from the conversation entirely: `K = round(closed_turns × PERCENT / 100)`, whole turns only, from the oldest forward. The full text of every removed turn (user prompt, assistant replies, tool calls and tool responses, in order) is appended to `<session_dir>/hypercompress_archive.md` (cumulative across invocations) and the turn is replaced by one `SYSTEM MESSAGE: [hiper-comprimido: turno N de M archivado en hypercompress_archive.md]` marker.
+- **The unit is the TURN, not the message.** A turn starts at a real user prompt and ends right before the next one (it contains every `assistant`/`tool` message produced while serving it, including an assistant that emits several sub-tools).
+- **Why the `write_file` / `edit_files` bodies are dropped in compress mode:** once a file is created or edited, its resulting state is already in the `=== SOURCE OF TRUTH ===` block of every following turn. Keeping the full `arguments` payload (the `new_string` blocks, the whole `content`) in the history duplicates that state — staler and more expensive. The receipt keeps the *fact* (`t1 edit_files paths=… edits=3`) and drops the *payload*.
 - Never touches the active turn (the prompt the session will resume with), the system prompt, the orchestration rules, the SoT or the metadata.
 - Creates a timestamped backup before modifying (`request_backup_YYYYMMDD_HHMMSS.json`), and does nothing at all (not even a backup) when no turn qualifies.
 - One-shot and user-invoked — nothing runs automatically.

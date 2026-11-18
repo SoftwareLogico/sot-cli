@@ -1,26 +1,23 @@
-"""Hyper-compression: collapse past tool activity into receipts, on request.
+"""Hyper-compression for session histories — two distinct, on-request modes.
 
-Scans the payload for closed TURNS — a turn starts at a real user prompt and
-ends right before the next one — and rewrites every
+- ``compress`` (``--hypercompress`` with no value): collapses past tool
+  chatter inside every closed turn. Each ``(assistant+tool_calls → tool)+``
+  run becomes one compact ``SYSTEM MESSAGE:`` receipt. Chat-only turns and
+  the rest of the conversation stay verbatim.
 
-    (assistant with tool_calls → tool response)+
+- ``truncate`` (``--hypercompress PERCENT``): removes the OLDEST PERCENT%
+  of closed turns from the conversation entirely. A turn starts at a real
+  user prompt and ends right before the next one; every removed turn (user
+  prompts, assistant replies, tool calls and tool responses, in order) is
+  appended to a Markdown archive inside the session folder:
 
-run inside the OLDEST N% of them as a single summary line:
+      <session_dir>/hypercompress_archive.md
 
-    user prompt
-    user: "SYSTEM MESSAGE: Assistant requested tools this turn: <tool> (<status>), ..."
-    assistant: (final text reply)
+  and replaced in ``request.json`` by a single ``SYSTEM MESSAGE:`` marker so
+  the original text is preserved for backup/audit purposes.
 
-Everything else is preserved verbatim and in order: user prompts, final
-assistant answers, ephemeral ``SYSTEM MESSAGE:`` receipts, the SoT block and
-the CURRENT METADATA block. The active turn (the prompt the session resumes
-with) is never touched.
-
-Why the tool bodies are dropped: the post-mutation file state already lives in
-the ``=== SOURCE OF TRUTH ===`` block of every following turn, so keeping the
-full ``arguments`` payload (the ``new_string`` / ``content`` blocks) in the
-history duplicates it — staler and more expensive. The receipt keeps the fact,
-drops the payload.
+In both modes the system prompt, the first real user message (rules), the
+SoT block, the CURRENT METADATA block and the active turn are never touched.
 
 This is a ONE-SHOT operation — run once per session when the user explicitly
 requests it.
@@ -86,29 +83,60 @@ def _msg_char_count(msg: dict[str, Any]) -> int:
     return total
 
 
+def _append_to_archive(archive_path: Path, turn_number: int, markdown: str) -> None:
+    """Append one compressed turn to the session's cumulative archive .md."""
+    header = (
+        f"\n\n---\n\n### Turno {turn_number} — archivado por hipercompresión "
+        f"({datetime.now().isoformat(timespec='seconds')})\n\n"
+    )
+    with open(archive_path, "a", encoding="utf-8") as f:
+        f.write(header)
+        f.write(markdown)
+        f.write("\n")
+
+
+def _format_block_as_markdown(block: list[dict[str, Any]]) -> str:
+    """Render a whole turn (user/assistant/tool messages) as Markdown text."""
+    parts: list[str] = []
+    for msg in block:
+        role = msg.get("role", "?")
+        text = _get_content_text(msg).strip()
+        if not text:
+            continue
+        parts.append(f"**{role}:**\n```\n{text}\n```\n")
+    return "\n".join(parts)
+
+
 def hyper_compress_session(
     session_dir: Path,
     dry_run: bool = False,
     percent: int = 100,
+    mode: str = "truncate",
 ) -> dict[str, Any]:
-    """Compress the OLDEST ``percent``% of closed turns in a session's request.json.
+    """Hyper-compress a session's request.json.
 
-    A turn starts at a real user prompt and ends right before the next one (it
-    contains every assistant/tool message produced while serving it). Turns are
-    atomic and always taken from the oldest forward. The active turn — the
-    prompt the session will resume with — is never touched.
+    ``mode="compress"`` collapses past tool chatter inside every closed turn
+    into receipts; chat-only turns are untouched.
+
+    ``mode="truncate"`` removes the OLDEST ``percent``% of closed turns (a
+    turn starts at a real user prompt and ends right before the next one),
+    appends their full text to ``session_dir/hypercompress_archive.md`` and
+    replaces each one by a single ``SYSTEM MESSAGE:`` marker. The active turn
+    — the prompt the session will resume with — is never touched.
 
     Creates a timestamped backup before modifying the file.
 
     Args:
         session_dir: Path to the session directory (contains request.json).
         dry_run: If True, only report what would be compressed without writing.
-        percent: Share (1-100) of the closed turns to compress, oldest first.
+        percent: Share (1-100) of the closed turns to truncate, oldest first.
+        mode: ``"compress"`` (tool chatter) or ``"truncate"`` (turn removal).
 
     Returns:
         A dict with stats::
 
             {
+                "mode": str,
                 "blocks_compressed": int,
                 "messages_before": int,
                 "messages_after": int,
@@ -133,22 +161,32 @@ def hyper_compress_session(
         return {"error": "No messages in request.json payload"}
 
     percent = max(0, min(100, int(percent)))
+    mode = str(mode).strip().lower()
+    if mode not in ("compress", "truncate"):
+        mode = "truncate"
     spans = _split_turns(messages)
     # The last span is the ACTIVE turn: never compressed.
     closed_turns = max(0, len(spans) - 1)
-    turns_compressed = _turns_for_percent(closed_turns, percent)
 
     # Calculate original size
     chars_before = sum(_msg_char_count(m) for m in messages)
     msg_before = len(messages)
 
-    # Process turns
-    compressed_messages = _compress(messages, percent=percent, spans=spans)
+    archive_path = session_dir / "hypercompress_archive.md"
+    compressed_messages, turns_compressed = _compress(
+        messages,
+        mode=mode,
+        percent=percent,
+        spans=spans,
+        archive_path=archive_path,
+        turns_compressible_total=closed_turns,
+    )
 
     chars_after = sum(_msg_char_count(m) for m in compressed_messages)
     msg_after = len(compressed_messages)
 
     stats = {
+        "mode": mode,
         "blocks_compressed": msg_before - msg_after,
         "messages_before": msg_before,
         "messages_after": msg_after,
@@ -182,6 +220,7 @@ def hyper_compress_session(
     _tmp = request_path.with_suffix(request_path.suffix + ".tmp")
     _tmp.write_text(_text, encoding="utf-8")
     import os as _os
+
     _os.replace(_tmp, request_path)
 
     return stats
@@ -200,11 +239,11 @@ def _parse_tool_status(response: str) -> tuple[str, str]:
     # Known failure patterns
     if "error:" in lower and "ok" not in lower[:20]:
         idx = lower.find("error:")
-        err = response[idx:idx+80].strip()
+        err = response[idx:idx + 80].strip()
         return "failed", err
     if "failed" in lower and "ok" not in lower[:20]:
         idx = lower.find("failed")
-        snippet = response[max(0,idx-20):idx+80].strip()
+        snippet = response[max(0, idx - 20) : idx + 80].strip()
         return "failed", snippet
     if "exit=1" in response.split("'")[-1] if "'" in response else False:
         return "failed", "command returned exit code 1"
@@ -314,10 +353,8 @@ def _turns_for_percent(total: int, percent: int) -> int:
 def _collapse_tool_runs(block: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collapse every ``(assistant+tool_calls → tool)+`` run inside ONE turn.
 
-    Everything else stays verbatim and in order: the user prompt, any final
-    assistant text, and any ephemeral message (SoT / CURRENT METADATA /
-    previous SYSTEM MESSAGE receipts). Only the tool chatter is replaced by a
-    single summary line, because its payload already lives in the SoT.
+    Kept for backwards compatibility; the new default path archives the whole
+    turn instead of only collapsing tool chatter.
     """
     result: list[dict[str, Any]] = []
     index = 0
@@ -358,30 +395,71 @@ def _collapse_tool_runs(block: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _compress(
     messages: list[dict[str, Any]],
+    mode: str = "truncate",
     percent: int = 100,
     spans: list[tuple[int, int]] | None = None,
-) -> list[dict[str, Any]]:
-    """Rebuild the message list, collapsing the OLDEST ``percent``% of turns.
+    archive_path: Path | None = None,
+    turns_compressible_total: int = 0,
+) -> tuple[list[dict[str, Any]], int]:
+    """Rebuild the message list according to ``mode``.
+
+    ``compress``: every ``(assistant+tool_calls → tool)+`` run inside CLOSED
+    turns is collapsed into one receipt; chat-only turns stay verbatim.
+
+    ``truncate``: the OLDEST ``percent``% of closed turns is removed from the
+    conversation, archived to ``archive_path`` (when provided) and replaced by
+    a single ``SYSTEM MESSAGE:`` marker.
 
     System messages, real user prompts, final assistant answers, ephemeral
-    blocks and the active turn are always preserved. Only closed turns lose
-    their tool call/response chatter.
+    blocks and the active turn are always preserved.
+
+    Returns the rebuilt message list and the number of turns compressed.
     """
     spans = _split_turns(messages) if spans is None else spans
-    turns_to_compress = _turns_for_percent(max(0, len(spans) - 1), percent)
+    closed_turns = max(0, len(spans) - 1)
 
     result: list[dict[str, Any]] = []
     cursor = 0
+
+    if mode == "compress":
+        turns_compressed = 0
+        for position, (start, end) in enumerate(spans):
+            result.extend(messages[cursor:start])
+            block = messages[start:end]
+            if position < closed_turns:
+                collapsed = _collapse_tool_runs(block)
+                if len(collapsed) != len(block):
+                    turns_compressed += 1
+                result.extend(collapsed)
+            else:
+                result.extend(block)
+            cursor = end
+        result.extend(messages[cursor:])
+        return result, turns_compressed
+
+    turns_to_compress = _turns_for_percent(closed_turns, percent)
     for position, (start, end) in enumerate(spans):
         result.extend(messages[cursor:start])
         block = messages[start:end]
         if position < turns_to_compress:
-            result.extend(_collapse_tool_runs(block))
+            markdown = _format_block_as_markdown(block)
+            if archive_path is not None:
+                _append_to_archive(archive_path, position + 1, markdown)
+            result.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"SYSTEM MESSAGE: [hiper-comprimido: turno {position + 1} de "
+                        f"{turns_compressible_total} archivado en "
+                        f"{archive_path.name if archive_path else 'hypercompress_archive.md'}]"
+                    ),
+                }
+            )
         else:
             result.extend(block)
         cursor = end
     result.extend(messages[cursor:])
-    return result
+    return result, turns_to_compress
 
 
 def reload_chat_history_from_request(session_dir: Path) -> list[dict[str, Any]] | None:

@@ -278,9 +278,11 @@ sot-cli prompt --no-media
 sot-cli prompt --context_limit 200k
 sot-cli prompt --context_limit 1.3m
 
-# Collapse past tool turns into receipts before resuming.
-# Optional PERCENT (1-100) = share of the OLDEST closed turns to compress.
+# Compress past tool chatter into SYSTEM MESSAGE receipts before resuming.
 sot-cli <session_id> --hypercompress
+
+# Or TRUNCATE the oldest PERCENT% (1-100) of closed turns out of the
+# conversation, archiving their full text to <session_dir>/hypercompress_archive.md.
 sot-cli <session_id> --hypercompress 30
 
 # Cleaning the house manually — these are two INDEPENDENT one-shot operations

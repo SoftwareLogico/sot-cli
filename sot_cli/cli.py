@@ -1124,7 +1124,7 @@ def _do_async(runtime: AppRuntime, args: Namespace) -> int:
                 getattr(args, "model", None),
                 getattr(args, "no_tools", False),
                 subagent_model_override=getattr(args, "subagent_model", None),
-                hypercompress=_parse_percent(getattr(args, "hypercompress", None)),
+                hypercompress=_parse_hypercompress(getattr(args, "hypercompress", None)),
             )
         finally:
             try:
@@ -1184,10 +1184,20 @@ def _parse_token_count(value: str) -> int:
     return total
 
 
-def _parse_percent(value: str | None) -> int | None:
-    """Parse --hypercompress PERCENT (1-100). None means "not requested"."""
+_HYPERCOMPRESS_COMPRESS = "collapse"
+
+
+def _parse_hypercompress(value: str | None) -> tuple[str, int] | None:
+    """Parse --hypercompress into (mode, percent). None means "not requested".
+
+    No value means ``compress``: collapse past tool chatter into receipts.
+    A PERCENT value (1-100) means ``truncate``: archive the oldest PERCENT%
+    of closed turns out of the conversation and leave a marker in their place.
+    """
     if value is None:
         return None
+    if value == _HYPERCOMPRESS_COMPRESS:
+        return ("compress", 100)
     text = str(value).strip()
     try:
         percent = int(text)
@@ -1197,7 +1207,7 @@ def _parse_percent(value: str | None) -> int | None:
         ) from None
     if percent < 1 or percent > 100:
         raise ArgumentTypeError("percentage must be between 1 and 100")
-    return percent
+    return ("truncate", percent)
 
 
 def _build_parser() -> ArgumentParser:
@@ -1209,7 +1219,7 @@ Examples:
   sot-cli                         Start a new interactive session
   sot-cli --prompt                Same as above (explicit)
   sot-cli --session SESSION_ID    Resume session by ID
-  sot-cli --session SESSION_ID --hypercompress  Compress history before resume
+  sot-cli --session SESSION_ID --hypercompress  Compress tool chatter before resume
   sot-cli --list_sessions         List all sessions as JSON
   sot-cli --status                List sessions as table
   sot-cli --clean_sot SESSION_ID  Remove SoT files from a session
@@ -1219,7 +1229,7 @@ Examples:
   sot-cli --prompt --title "my session"
   sot-cli --command SESSION_ID "run tests" --no-tools
   sot-cli --run_task agent_1 "find the bug"
-  sot-cli <session_id> --hypercompress 30   Compress the oldest 30% of closed turns
+  sot-cli <session_id> --hypercompress 30   Truncate the oldest 30% of closed turns (archived)
   sot-cli prompt --context_limit 200k       Force the context bar denominator
   sot-cli prompt --no-media                 Text-only: never send images/PDF/audio/video
 """,
@@ -1243,10 +1253,10 @@ Examples:
     parser.add_argument(
         "--hypercompress",
         nargs="?",
-        const="100",
+        const=_HYPERCOMPRESS_COMPRESS,
         default=None,
         metavar="PERCENT",
-        help="Collapse past tool turns into receipts before the session starts. Optional PERCENT (1-100) = share of the OLDEST closed turns to compress; omit for 100.",
+        help="Compress past tool chatter into SYSTEM MESSAGE receipts before the session starts. When PERCENT (1-100) is given, TRUNCATES the oldest PERCENT%% of closed turns instead, archiving them to hypercompress_archive.md.",
     )
     parser.add_argument(
         "--context_limit",
@@ -1867,7 +1877,7 @@ async def _run_prompt(
     model_override: str | None,
     no_tools: bool,
     subagent_model_override: str | None = None,
-    hypercompress: int | None = None,
+    hypercompress: tuple[str, int] | None = None,
 ) -> int:
     if session_id:
         record = runtime.sessions.load(session_id)
@@ -2125,9 +2135,14 @@ async def _run_prompt(
     if loaded_sot is not None:
         session_state.sot = loaded_sot
 
-    # Hyper-compress if requested (optional PERCENT of the OLDEST closed turns)
+    # Hyper-compress if requested:
+    #   --hypercompress        -> "compress": collapse past tool chatter
+    #   --hypercompress N      -> "truncate": archive the oldest N% of closed turns away
     if hypercompress:
-        hc_result = hyper_compress_session(session_dir, dry_run=False, percent=hypercompress)
+        hc_mode, hc_percent = hypercompress
+        hc_result = hyper_compress_session(
+            session_dir, dry_run=False, percent=hc_percent, mode=hc_mode
+        )
         if "error" in hc_result:
             console.print(f"[yellow]Hyper-compress skipped: {hc_result['error']}[/yellow]")
         elif not hc_result.get("turns_compressed"):
@@ -2136,13 +2151,23 @@ async def _run_prompt(
                 f"({hc_result.get('turns_total', 0)} turn(s) in history, "
                 f"{hc_result.get('turns_compressible', 0)} closed).[/yellow]"
             )
+        elif hc_mode == "truncate":
+            console.print(
+                f"[green]Hyper-compressed (truncated) {hc_result['turns_compressed']}/"
+                f"{hc_result['turns_compressible']} closed turns "
+                f"({hc_result['percent']}%), archived to hypercompress_archive.md: "
+                f"{hc_result['messages_before']} → {hc_result['messages_after']} messages, "
+                f"saved ~{hc_result['chars_saved']:,} chars[/green]"
+            )
+            # Reload compressed history into memory so subsequent turns use the clean state
+            compressed_history = _load_chat_history_from_request_jsons(session_dir)
+            if compressed_history:
+                session_state.chat_history = compressed_history
         else:
             console.print(
-                f"[green]Hyper-compressed {hc_result['turns_compressed']}/"
-                f"{hc_result['turns_compressible']} closed turns "
-                f"({hc_result['percent']}%): {hc_result['messages_before']} → "
-                f"{hc_result['messages_after']} messages, saved ~"
-                f"{hc_result['chars_saved']:,} chars[/green]"
+                f"[green]Hyper-compressed tool chatter in {hc_result['turns_compressed']} "
+                f"turn(s): {hc_result['messages_before']} → {hc_result['messages_after']} "
+                f"messages, saved ~{hc_result['chars_saved']:,} chars[/green]"
             )
             # Reload compressed history into memory so subsequent turns use the clean state
             compressed_history = _load_chat_history_from_request_jsons(session_dir)
