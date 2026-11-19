@@ -9,6 +9,7 @@ from typing import Any
 
 from sot_cli.spinners import SPINNERS
 from rich.console import Console
+from rich.markup import escape
 
 from sot_cli.constants import (
     FALLBACK_DELEGATED_MAX_ROUNDS,
@@ -944,7 +945,7 @@ async def run_tool_loop(
                     "quirk — try rephrasing, switching model/provider, or --hypercompress."
                 )
             if completion.text and not round_request.stream:
-                console.print(completion.text)
+                console.print(escape(completion.text))
             from sot_cli.config.app import AppConfig
             _cfg = AppConfig = runtime.config
             if not is_task and _cfg.tools.play_finished_notification:
@@ -963,7 +964,7 @@ async def run_tool_loop(
             function = tool_call.get("function") or {}
             tool_name = str(function.get("name", "unknown"))
             tool_args_raw = str(function.get("arguments", "{}"))
-            console.print(f"[blue]assistant requested[/blue] {tool_name} {tool_args_raw}")
+            console.print(f"[blue]assistant requested[/blue] {escape(tool_name)} {escape(tool_args_raw)}")
 
             tool_signature = _build_tool_call_signature(tool_call)
             cached_execution = same_round_cache.get(tool_signature)
@@ -980,7 +981,7 @@ async def run_tool_loop(
                     tool_call_id, tool_result = await registry.execute_tool_call(tool_call)
                 executed_any_tool = True
 
-                console.print(f"[dim]tool {tool_result.name} -> {'error' if tool_result.is_error else 'ok'}[/dim]")
+                console.print(f"[dim]tool {escape(tool_result.name)} -> {'error' if tool_result.is_error else 'ok'}[/dim]")
 
                 tool_summary = _build_tool_result_summary(tool_result)
                 same_round_cache[tool_signature] = (
@@ -1001,7 +1002,7 @@ async def run_tool_loop(
                 tool_result = _clone_tool_execution_result(cached_tool_result)
                 tool_summary = f"duplicate of {original_tool_call_id} -> {cached_summary}"
                 console.print(
-                    f"[dim]tool {tool_result.name} -> reused duplicate result from {original_tool_call_id}[/dim]"
+                    f"[dim]tool {escape(tool_result.name)} -> reused duplicate result from {escape(original_tool_call_id)}[/dim]"
                 )
 
             # Tool result to permanent history: metadata only (SoT Rule 2)
@@ -1053,7 +1054,7 @@ async def run_tool_loop(
                     _play_turn_done_sound(_cfg)
 
                 return result
-            console.print(f"[bold yellow]Warning:[/bold yellow] {message}")
+            console.print(f"[bold yellow]Warning:[/bold yellow] {escape(message)}")
             result.text = message
             result.tool_calls = []
             from sot_cli.config.app import AppConfig
@@ -1075,7 +1076,7 @@ async def run_tool_loop(
             _play_turn_done_sound(_cfg)
 
         return result
-    console.print(f"[bold yellow]Warning:[/bold yellow] {message}")
+    console.print(f"[bold yellow]Warning:[/bold yellow] {escape(message)}")
     result.text = message
     result.tool_calls = []
 

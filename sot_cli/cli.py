@@ -19,7 +19,8 @@ from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.markup import escape  # <-- AÑADIDO PARA EVITAR MARKUP ERRORS
+from rich.markup import MarkupError, escape
+from rich.text import Text
 
 from typing import Any
 
@@ -1869,6 +1870,23 @@ async def _run_task(runtime: AppRuntime, agent_id: str, prompt: str) -> int:
 # ── Interactive prompt ───────────────────────────────────────────────────
 
 
+def _banner_render_line(line: str) -> Text:
+    """Render one banner line as Rich markup, degrading to plain text on error.
+
+    The banner is a list of independently built lines joined into a single
+    string and handed to a Panel, so Rich parsed the whole document at once: a
+    single malformed tag anywhere aborted the entire panel with MarkupError.
+    Parsing each line on its own confines the damage to the offending line and
+    keeps the panel alive.
+    """
+    if not line:
+        return Text("")
+    try:
+        return Text.from_markup(line)
+    except MarkupError:
+        return Text(line)
+
+
 async def _run_prompt(
     runtime: AppRuntime,
     session_id: str | None,
@@ -2037,9 +2055,14 @@ async def _run_prompt(
     banner_lines.append("")
     banner_lines.append(f"[bold yellow]{_submit_shortcut_help_text()} Press Ctrl+C on an empty prompt to leave.[/bold yellow]")
 
+    banner_text = Text()
+    for index, line in enumerate(banner_lines):
+        if index:
+            banner_text.append("\n")
+        banner_text.append_text(_banner_render_line(line))
     console.print(
         Panel.fit(
-            "\n".join(banner_lines),
+            banner_text,
             border_style="cyan",
         )
     )
