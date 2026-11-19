@@ -38,7 +38,8 @@ def prepare_turn_request(
     )
 
 
-    # Reasoning effort from sot.toml (OpenRouter, Bedrock, and NVIDIA use this)
+    # Reasoning effort from sot.toml (OpenRouter, Bedrock, NVIDIA y everything
+    # endpoint OpenAI-like: openai/LM Studio/Ollama use plane field)
     raw_effort = provider.extra.get("reasoning_effort")
     reasoning_effort: str | None = (
         str(raw_effort).strip() or None if raw_effort is not None else None

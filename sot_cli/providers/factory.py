@@ -43,6 +43,7 @@ def create_provider_adapter(config: AppConfig, provider_name: ProviderName, mode
         model=effective_model,
         extra_headers=extra_headers,
         provider_selection=provider_selection,
+        data_dir=config.data_dir,
     )
 
 

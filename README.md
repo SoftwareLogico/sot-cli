@@ -201,13 +201,14 @@ base_url = "https://openrouter.ai/api/v1"
 model = "x-ai/grok-4.1-fast"
 temperature = 0.7
 max_output_tokens = 32768
-reasoning_effort = "medium" # options: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" — silently ignored by non-reasoning upstreams
+reasoning_effort = "medium" # options: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" — silently ignored by non-reasoning upstreams; "none" sends enabled:false, "xhigh" caps reasoning.max_tokens
 
 [providers.lmstudio]
 base_url = "http://localhost:1234/v1"
 model = "" # empty means it'll use the loaded one
 temperature = 0.7
 max_output_tokens = 32768
+reasoning_effort = "high" # options: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" — no "max" (HTTP 400, clamped). Models that only advertise off/on get the native reasoning toggle instead.
 
 [providers.openai] # works with OpenAI and any OpenAI-compatible API
 base_url = "https://api.openai.com/v1"
@@ -226,7 +227,7 @@ base_url = "https://integrate.api.nvidia.com/v1"
 model = "qwen/qwen3-coder-480b-a35b-instruct"
 temperature = 0.7
 max_output_tokens = 32768
-reasoning_effort = "high"  # "none"|"medium"|"high"|"xhigh" — maps to chat_template_kwargs per model family
+reasoning_effort = "high"  # "none"|"medium"|"high"|"xhigh" — maps to chat_template_kwargs per model family (low/minimal → medium, xhigh → high)
 
 [providers.bedrock]
 # base_url is auto-resolved from region to https://bedrock-mantle.{region}.api.aws/v1
@@ -234,7 +235,7 @@ region = "us-east-1"
 model = "us.anthropic.claude-fable-5"
 temperature = 1.0
 max_output_tokens = 32768
-reasoning_effort = "high"
+reasoning_effort = "high"  # "none"|"minimal"|"low"|"medium"|"high"|"xhigh" — Bedrock tops out at high (xhigh/max → high)
 # thinking_type: "adaptive" for Fable 5 / Opus 4 / Claude 3.7+, "enabled" for older Claude
 # Omit to auto-detect from model name.
 thinking_type = "adaptive"

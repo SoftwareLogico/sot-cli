@@ -90,6 +90,11 @@ class ProviderCapability:
     supports_audio: bool = False
     supports_video: bool = False
     # Model metadata populated by provider API detection
+    supports_reasoning: bool = False
+    # Levels the model actually accepts, as advertised by the provider API
+    # (LM Studio publishes them in capabilities.reasoning.allowed_options).
+    # Empty = provider does not advertise a scale.
+    reasoning_options: tuple[str, ...] = ()
     context_length: int | None = None
     allocated_context_length: int | None = None
     max_completion_tokens: int | None = None
@@ -123,9 +128,23 @@ class ProviderRequest:
     # from `[tools].compression_reasoning_trunc_chars` in sot.toml.
     compression_reasoning_trunc_chars: int = 0
 
-    # OpenRouter reasoning effort — uses nested "reasoning": {"effort": "..."}
-    # Only OpenRouter supports this; OpenAI rejects it with tools.
+    # Reasoning effort. Wire format diverges per provider — see the
+    # `_REASONING_LADDER` table in openai_compat.py, which is the authority on
+    # what each fixed provider accepts.
     reasoning_effort: str | None = None
+
+    # Filled by the adapter at payload-build time. `upstream_dialect` is the
+    # real backend behind the open `openai` alias (lyber/nanogpt/strata/...,
+    # resolved by `providers/upstream.py`); it decides which reasoning shape
+    # and level set the request gets. Empty means "provider is not the alias".
+    upstream_dialect: str = ""
+    upstream_ignored: bool = False
+
+    # Levels the endpoint advertised as accepted (LM Studio
+    # `capabilities.reasoning.allowed_options`, copied from
+    # ProviderCapability). Empty = no restriction known; a model that only
+    # advertises off/on is collapsed to the native boolean toggle.
+    reasoning_options: tuple[str, ...] = ()
 
 
 @dataclass

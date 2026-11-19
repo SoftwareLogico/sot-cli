@@ -24,6 +24,8 @@ from sot_cli.providers.base import (
     ProviderRequest,
     UpstreamStreamError,
 )
+from sot_cli.providers.upstream import describe as describe_upstream
+from sot_cli.providers.upstream import resolve as resolve_upstream
 
 
 # Word-boundary scan used by ``_is_successful_tool_response``. Matches any
@@ -680,6 +682,7 @@ class OpenAICompatibleAdapter:
         model: str = "",
         extra_headers: dict[str, str] | None = None,
         provider_selection: str | None = None,
+        data_dir: str = "",
     ) -> None:
         self.name = name
         self.base_url = base_url.rstrip("/")
@@ -687,6 +690,12 @@ class OpenAICompatibleAdapter:
         self.model = model
         self.extra_headers = extra_headers or {}
         self.provider_selection = provider_selection
+        self.data_dir = data_dir
+        # Upstream dialect — only meaningful for the open `openai` alias, where
+        # it identifies the real backend so the right reasoning shape is used.
+        self.upstream_dialect = ""
+        self.upstream_evidence = ""
+        self.upstream_ignored = False
         # Start with nothing — detect_capabilities will populate this
         self.capability = ProviderCapability()
         self._capabilities_detected = False
@@ -706,10 +715,12 @@ class OpenAICompatibleAdapter:
         elif self.name == "bedrock":
             await self._detect_bedrock_capabilities()
         elif self.name == "openai":
-            # OpenAI's /v1/models endpoint doesn't expose tool/modality flags or
-            # context windows in a useful shape, and the same `openai` provider
-            # is reused to talk to any OpenAI-compatible service (so probing
-            # would also be unreliable). We assume the optimistic defaults of
+            # The alias holds ANY OpenAI-compatible endpoint, and each real
+            # backend has its own reasoning dialect — one that rejects an
+            # unknown field with 400, another that silently ignores it. Identify
+            # the backend first so the right shape/scale is used, then fall back
+            # to the optimistic capability defaults below.
+            await self.detect_upstream()
             # current frontier OpenAI-style models: tools on, vision + PDFs on,
             # 1M context, audio and video support. If a downstream model is more
             # limited, the API itself will reject the unsupported feature at
@@ -735,6 +746,31 @@ class OpenAICompatibleAdapter:
                 modality="text+image->text",
             )
         self._capabilities_detected = True
+
+    async def detect_upstream(self) -> None:
+        """Identify the real backend behind the `openai` alias.
+
+        Never raises: an unidentified endpoint degrades to the `generic`
+        dialect, which clamps to the level set every OpenAI-compatible server
+        accepts. The verdict (and its evidence) is cached per base_url+model, so
+        the probe costs one request once — and a different URL re-detects
+        instead of inheriting a stale answer.
+        """
+        verdict = await resolve_upstream(
+            self.base_url,
+            self.api_key,
+            self.model,
+            self.data_dir or ".",
+        )
+        self.upstream_dialect = str(verdict.get("dialect") or "generic")
+        self.upstream_evidence = str(verdict.get("evidence") or "")
+        self.upstream_ignored = bool(verdict.get("ignored"))
+
+    def upstream_line(self) -> str:
+        """Banner line describing the detected upstream (empty when not the alias)."""
+        if self.name != "openai" or not self.upstream_dialect:
+            return ""
+        return describe_upstream(self.upstream_dialect, self.upstream_evidence, self.upstream_ignored)
 
     async def _detect_openrouter_capabilities(self) -> None:
         """OpenRouter: GET /models returns architecture.input_modalities and supported_parameters."""
@@ -831,6 +867,20 @@ class OpenAICompatibleAdapter:
                 raise ValueError(f"Model '{self.model}' not found in LM Studio.")
 
         caps = model_info.get("capabilities", {})
+        # /api/v1/models returns an object, but the /api/v0/models fallback
+        # returns a bare list (["tool_use", "vision", ...]) — normalize both
+        # shapes instead of blowing up on `.get` over a list.
+        if isinstance(caps, list):
+            caps = {
+                "trained_for_tool_use": "tool_use" in caps,
+                "vision": "vision" in caps,
+                "reasoning": {"allowed_options": ["off", "on"]} if "reasoning" in caps else None,
+            }
+        if not isinstance(caps, dict):
+            caps = {}
+        _reasoning_caps = caps.get("reasoning")
+        _allowed = _reasoning_caps.get("allowed_options") if isinstance(_reasoning_caps, dict) else None
+        _allowed = tuple(str(x).lower() for x in _allowed) if isinstance(_allowed, list) else ()
         quant = model_info.get("quantization", {}) or {}
         
         allocated_context_length = None
@@ -843,6 +893,8 @@ class OpenAICompatibleAdapter:
         self.capability = ProviderCapability(
             supports_tools=bool(caps.get("trained_for_tool_use", False)),
             supports_images=bool(caps.get("vision", False)),
+            supports_reasoning=bool(_allowed),
+            reasoning_options=_allowed,
             supports_pdfs=False,
             supports_audio=False,
             supports_video=False,
@@ -978,6 +1030,9 @@ class OpenAICompatibleAdapter:
     async def stream_turn(self, request: ProviderRequest):
         url = f"{self.base_url}/chat/completions"
         resolved_model = self.model or request.model
+        request.reasoning_options = tuple(getattr(self.capability, "reasoning_options", ()) or ())
+        request.upstream_dialect = self.upstream_dialect
+        request.upstream_ignored = self.upstream_ignored
         payload = build_chat_completions_payload(request, resolved_model)
         if self.name == "openrouter" and self.provider_selection:
             payload["provider"] = {"order": [self.provider_selection], "allow_fallbacks": False}
@@ -1096,6 +1151,9 @@ class OpenAICompatibleAdapter:
     async def complete_turn(self, request: ProviderRequest) -> ProviderCompletion:
         url = f"{self.base_url}/chat/completions"
         resolved_model = self.model or request.model
+        request.reasoning_options = tuple(getattr(self.capability, "reasoning_options", ()) or ())
+        request.upstream_dialect = self.upstream_dialect
+        request.upstream_ignored = self.upstream_ignored
         payload = build_chat_completions_payload(request, resolved_model)
         payload["stream"] = False
         if self.name == "openrouter" and self.provider_selection:
@@ -1179,6 +1237,83 @@ def _is_openai_reasoning_model(model: str) -> bool:
 
 
 
+# ── Documented reasoning_effort scale, per fixed provider ───────────────
+# The four FIXED providers each expose their own accepted set, documented in
+# ARCHITECTURE.md, README.md and sot.example.toml. Anything outside the set is
+# clamped DOWN to the closest documented level instead of being forwarded raw:
+# a raw `max` is HTTP 400 on LM Studio and unvalidated on NVIDIA NIM.
+#
+# `openai` is not fixed — it is the alias for arbitrary OpenAI-compatible
+# endpoints (Lyber, Strata, vLLM, ...), so it takes the widest shared set and
+# only the real OpenAI reasoning class gets clamped harder.
+_REASONING_LADDER: dict[str, tuple[str, ...]] = {
+    "openrouter": ("none", "minimal", "low", "medium", "high", "xhigh"),
+    "lmstudio": ("none", "minimal", "low", "medium", "high", "xhigh"),
+    "bedrock": ("none", "minimal", "low", "medium", "high", "xhigh"),
+    "nvidia": ("none", "medium", "high", "xhigh"),
+    # Dialects of the open `openai` alias, resolved at runtime by
+    # `providers/upstream.py`. Each is the scale ITS docs publish.
+    "lyber": ("none", "low", "high", "xhigh", "max"),
+    "nanogpt": ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+    "strata": ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+    "heabsy": ("none", "minimal", "low", "medium", "high", "xhigh"),
+    # Last resort for an endpoint nothing identified: the intersection every
+    # OpenAI-compatible server understands — flat field, no `xhigh`, no `max`.
+    "generic": ("none", "minimal", "low", "medium", "high"),
+    # Bare `openai` only survives on the real OpenAI reasoning class, which is
+    # clamped to `high` later; the full scale is kept here for passthrough.
+    "openai": ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+}
+
+# Full scale, weakest → strongest. `max` exists upstream (NanoGPT, Strata) but
+# not on any of the fixed providers here.
+_EFFORT_ORDER: tuple[str, ...] = (
+    "none", "minimal", "low", "medium", "high", "xhigh", "max",
+)
+
+# Out-of-scale tokens → the documented level each provider gets instead.
+# NVIDIA clamps `low`/`minimal` UP to medium (its templates know high/medium
+# only and `none` would switch thinking off entirely); the rest clamp down.
+_REASONING_CLAMP: dict[str, dict[str, str]] = {
+    "openrouter": {"max": "xhigh"},
+    "lmstudio": {"max": "xhigh"},
+    "bedrock": {"max": "high", "xhigh": "high", "minimal": "low", "none": "minimal"},
+    "nvidia": {"minimal": "medium", "low": "medium", "max": "high"},
+    "lyber": {"minimal": "low", "medium": "high"},
+    "heabsy": {"max": "xhigh"},
+    "generic": {"xhigh": "high", "max": "high"},
+}
+
+
+def _dialect_of(request: ProviderRequest) -> str:
+    """Reasoning dialect for this request.
+
+    Only the open `openai` alias has an indirection: the real backend is
+    whatever `upstream.resolve()` identified for that base URL. An unresolved
+    alias degrades to `generic` — never to a random guess.
+    """
+    if request.provider_name == "openai":
+        return request.upstream_dialect or "generic"
+    return request.provider_name
+
+
+def _clamp_effort(provider: str, effort: str) -> str | None:
+    """Clamp ``effort`` into the documented set for ``provider``.
+
+    Returns None for a token outside the full scale, so the caller lets the
+    provider apply its own default instead of guessing.
+    """
+    ladder = _REASONING_LADDER.get(provider)
+    if not ladder:
+        return effort
+    token = (effort or "").lower().strip()
+    if token in ladder:
+        return token
+    if token not in _EFFORT_ORDER:
+        return None
+    return _REASONING_CLAMP.get(provider, {}).get(token)
+
+
 # ── NVIDIA NIM model-family → chat_template_kwargs mapping ──────────────
 # NVIDIA NIM hosts many model families on the same endpoint. Each uses
 # a DIFFERENT key inside `chat_template_kwargs` for thinking/reasoning.
@@ -1196,6 +1331,19 @@ def _is_openai_reasoning_model(model: str) -> bool:
 # Unknown models default to enable_thinking (most common convention).
 
 
+def _is_openai_native_model(model: str) -> bool:
+    """True for OpenAI's own non-reasoning families (gpt-4*, gpt-3.5*, chatgpt-4o*).
+
+    Those reject an unknown ``reasoning_effort`` with HTTP 400, so the flat
+    field is only forwarded for third-party endpoints riding the `openai`
+    alias (Lyber, Heabsy, ...) and for the reasoning class above.
+    """
+    if not model:
+        return False
+    m = model.lower().strip()
+    return m.startswith(("gpt-4", "gpt-3.5", "chatgpt-4o"))
+
+
 def _build_nvidia_thinking_kwargs(
     model: str, reasoning_effort: str | None
 ) -> dict[str, Any] | None:
@@ -1204,7 +1352,16 @@ def _build_nvidia_thinking_kwargs(
     Returns None when reasoning_effort is empty. For Mistral/GPT-OSS
     families, uses a sentinel key `_top_level_reasoning_effort` that
     the caller must pop and inject as a top-level payload field.
+
+    Callers must pass an already-clamped level: NIM documents
+    none|medium|high|xhigh only, so `max` is never seen here and
+    `minimal`/`low` arrive as `medium`.
     """
+
+    def _level(token: str) -> str:
+        """NIM families know high/medium only — never forward xhigh."""
+        return "high" if token in ("high", "xhigh", "max") else "medium"
+
     if not reasoning_effort:
         return None
 
@@ -1230,9 +1387,7 @@ def _build_nvidia_thinking_kwargs(
     if "deepseek" in m:
         if effort == "none":
             return {"thinking": False}
-        if effort in ("max", "xhigh"):
-            return {"thinking": True, "reasoning_effort": "max"}
-        return {"thinking": True, "reasoning_effort": "high"}
+        return {"thinking": True, "reasoning_effort": _level(effort)}
 
     # GLM / Z.ai family
     if "glm" in m:
@@ -1248,11 +1403,11 @@ def _build_nvidia_thinking_kwargs(
 
     # Mistral family — top-level reasoning_effort, no kwargs
     if "mistral" in m:
-        return {"_top_level_reasoning_effort": effort if effort != "none" else "none"}
+        return {"_top_level_reasoning_effort": _level(effort)}
 
     # OpenAI GPT-OSS family — top-level reasoning_effort
     if "gpt-oss" in m:
-        return {"_top_level_reasoning_effort": effort if effort != "none" else "none"}
+        return {"_top_level_reasoning_effort": _level(effort)}
 
     # Unknown NVIDIA model — safe default
     if effort == "none":
@@ -1311,7 +1466,12 @@ def build_chat_completions_payload(request: ProviderRequest, resolved_model: str
     }
 
     # Usar max_completion_tokens para OpenAI, y también para Bedrock si el razonamiento está activo
-    if is_openai or (is_bedrock and request.reasoning_effort):
+    # El resto del camino OpenAI-like usa el nombre universal `max_tokens`.
+    _dialect_for_tokens = request.upstream_dialect if request.provider_name == "openai" else ""
+    if (
+        (is_openai and (openai_is_reasoning or _dialect_for_tokens in ("openai", "lyber", "heabsy")))
+        or (is_bedrock and request.reasoning_effort)
+    ):
         payload["max_completion_tokens"] = request.max_output_tokens
     else:
         payload["max_tokens"] = request.max_output_tokens
@@ -1346,21 +1506,54 @@ def build_chat_completions_payload(request: ProviderRequest, resolved_model: str
             tools = [_sanitize_tool_schema_for_openai(t) for t in tools]
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
+    # OpenAI-like but NOT OpenAI: LM Studio (llama.cpp), Ollama and the open
+    # `openai` alias take the flat top-level reasoning_effort. For the alias the
+    # accepted level set comes from the DETECTED upstream
+    # (`sot_cli/providers/upstream.py`), never from a blind guess; `generic` is
+    # the last resort and clamps to the intersection every server understands.
+    # Real OpenAI models only get it on the reasoning class, top out at `high`.
+    if request.provider_name in ("openai", "lmstudio", "ollama") and request.reasoning_effort:
+        dialect = _dialect_of(request)
+        effort = _clamp_effort(dialect, request.reasoning_effort)
+        if is_openai and openai_is_reasoning:
+            payload["reasoning_effort"] = "high" if effort in (None, "max", "xhigh") else effort
+        elif effort and not (is_openai and _is_openai_native_model(resolved_model)):
+            if request.provider_name == "lmstudio" and request.reasoning_options and set(
+                request.reasoning_options
+            ) <= {"off", "on", "auto"}:
+                # This model advertises a plain on/off toggle with no gradation
+                # (caps.reasoning.allowed_options). Any level would collapse to
+                # "on" anyway, so use the documented native toggle instead.
+                payload["reasoning"] = "off" if effort == "none" else "on"
+            else:
+                payload["reasoning_effort"] = effort
+
     # OpenRouter / Bedrock reasoning effort — nested object format
     # OpenRouter docs: https://openrouter.ai/docs/features/reasoning
     # Bedrock Mantle is OpenAI-compatible and accepts the same format.
     # OpenRouter reasoning effort
     if is_openrouter and request.reasoning_effort:
-        payload["reasoning"] = {"effort": request.reasoning_effort}
+        effort = _clamp_effort("openrouter", request.reasoning_effort)
+        if effort:
+            reasoning: dict[str, Any] = {"effort": effort}
+            if effort == "none":
+                reasoning["enabled"] = False
+            elif effort == "xhigh":
+                # The top of the ladder parks ~95% of max_tokens in thinking.
+                # Without a ceiling, a big prompt comes back empty with
+                # finish_reason="length" and the empty-reply retry bills the
+                # same turn twice.
+                reasoning["max_tokens"] = max(1024, int(request.max_output_tokens * 0.7))
+            payload["reasoning"] = reasoning
 
     # Bedrock Mantle reasoning effort
     if request.provider_name == "bedrock" and request.reasoning_effort:
-        effort = request.reasoning_effort.lower()
-        if effort == "xhigh":
-            effort = "high"
-        elif effort == "none":
+        effort = _clamp_effort("bedrock", request.reasoning_effort)
+        if effort == "none":
             effort = "minimal"
-        
+        elif effort == "xhigh":
+            # Mantle's documented scale stops at high.
+            effort = "high"
         if effort in ("minimal", "low", "medium", "high"):
             payload["reasoning_effort"] = effort
 
@@ -1369,7 +1562,8 @@ def build_chat_completions_payload(request: ProviderRequest, resolved_model: str
     # family uses different keys inside chat_template_kwargs to enable
     # reasoning. The mapping is model-name-based.
     if request.provider_name == "nvidia" and request.reasoning_effort:
-        thinking_kwargs = _build_nvidia_thinking_kwargs(resolved_model, request.reasoning_effort)
+        effort = _clamp_effort("nvidia", request.reasoning_effort)
+        thinking_kwargs = _build_nvidia_thinking_kwargs(resolved_model, effort)
         if thinking_kwargs is not None:
             top_level_effort = thinking_kwargs.pop("_top_level_reasoning_effort", None)
             if top_level_effort:

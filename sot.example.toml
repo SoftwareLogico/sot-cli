@@ -161,6 +161,11 @@ model = ""                              # empty = auto-detect loaded model
 subagent_model = ""                  # optional model for delegated sub-agents (empty = use main model)
 temperature = 0.7
 max_output_tokens = 32768
+# Reasoning scale of the server: none | minimal | low | medium | high | xhigh.
+# "max" is NOT accepted here (HTTP 400 invalid_value) and is clamped to xhigh.
+# If the loaded model advertises only off/on in capabilities.reasoning, the
+# adapter sends the native `reasoning` toggle instead of a level.
+reasoning_effort = "high"
 
 # ── OpenRouter ─────────────────────────────────────────────────────────
 #  Gateway to hundreds of models (free & paid). Needs an API key.
@@ -173,8 +178,10 @@ max_output_tokens = 32768
 http_referer = "https://github.com/SoftwareLogico/sot-cli"     # for rankings
 app_title = "sot-cli"                                          # for rankings
 categories = "coding,developer-tools"                          # OpenRouter attribution (up to 2, lowercase, hyphen-separated)
-# reasoning effort hint ("none"|"low"|"medium"|"high"|"xhigh")
-# OpenRouter nested format: {"reasoning": {"effort": "..."}}
+# reasoning effort hint ("none"|"minimal"|"low"|"medium"|"high"|"xhigh")
+# OpenRouter nested format: {"reasoning": {"effort": "..."}}; "none" also
+# sends enabled:false and "xhigh" caps reasoning.max_tokens, so a long prompt
+# cannot return empty on finish_reason="length".
 reasoning_effort = "medium"
 # OpenRouter provider selection — restrict which upstream serves the model.
 # Examples: "Anthropic", "Google", "Mistral", "DeepSeek", etc.
@@ -198,6 +205,8 @@ max_output_tokens = 32768
 #   mistral*   → reasoning_effort (top-level)
 #   gpt-oss*   → reasoning_effort (top-level)
 # Accepted values: "none" | "medium" | "high" | "xhigh"
+# NIM templates know high/medium only: low and minimal clamp up to medium,
+# xhigh clamps down to high (no family ever receives "max").
 reasoning_effort = "high"
 
 # ── Amazon Bedrock ──────────────────────────────────────────────────

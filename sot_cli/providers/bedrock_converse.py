@@ -252,6 +252,27 @@ def _translate_tools_to_converse(openai_tools: list[dict[str, Any]]) -> dict[str
     return {"tools": specs}
 
 
+_BEDROCK_LEVELS: dict[str, str] = {
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "high",
+    "max": "high",
+}
+
+
+def _bedrock_effort_level(effort: str | None) -> str:
+    """Map a reasoning effort onto the Converse levels Bedrock documents.
+
+    Bedrock tops out at ``high`` and has no ``minimal``, so ``xhigh``/``max``
+    clamp down to ``high`` and ``minimal`` clamps up to ``low``. Unknown or
+    empty values fall back to ``medium`` rather than dropping the field, since
+    reaching this helper already means reasoning is enabled.
+    """
+    return _BEDROCK_LEVELS.get((effort or "").lower().strip(), "medium")
+
+
 def _infer_context_length(model: str) -> int:
     """Infer context length from model name. Falls back to 1M for unknown models."""
     m = model.lower()
@@ -394,11 +415,11 @@ class BedrockConverseAdapter:
                 # kimi/glm/zai handled separately below
             if "kimi" in model_lower or "glm" in model_lower or "zai" in model_lower:
                 kwargs["additionalModelRequestFields"] = {
-                    "reasoning_config": "high"
+                    "reasoning_config": _bedrock_effort_level(request.reasoning_effort)
                 }
             elif thinking_type == "adaptive":
                 # adaptive = Fable 5, claude-opus-4, claude-3-7+ — uses output_config.effort
-                effort_level = "high" if request.reasoning_effort in ("high", "max", "xhigh") else "medium"
+                effort_level = _bedrock_effort_level(request.reasoning_effort)
                 kwargs["additionalModelRequestFields"] = {
                     "thinking": {"type": "adaptive"},
                     "output_config": {"effort": effort_level},
