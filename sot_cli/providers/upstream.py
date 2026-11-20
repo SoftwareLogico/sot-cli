@@ -214,6 +214,12 @@ def _reasoning_seen(payload: dict[str, Any]) -> bool:
     return False
 
 
+def _status_code(status: str) -> int:
+    """HTTP status out of a probe result like ``http:400``; 0 when not HTTP."""
+    _, _, raw = status.partition(":")
+    return int(raw) if raw.isdigit() else 0
+
+
 def _is_unsupported_error(status: int, body: str) -> bool:
     if status != 400:
         return False
@@ -328,7 +334,7 @@ async def resolve(
                     }
                 store_cached(data_dir, base_url, model, candidate, status, False)
                 return {"dialect": candidate, "evidence": status, "ignored": False, "confidence": "probed"}
-            if not _is_unsupported_error(int(status.split(":")[1]), "unsupported_parameter"):
+            if not _is_unsupported_error(_status_code(status), "unsupported_parameter"):
                 # Anything that is not a "this parameter is wrong" 400 does not
                 # tell us about the dialect; keep the safest profile.
                 break

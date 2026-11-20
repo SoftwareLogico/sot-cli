@@ -734,6 +734,8 @@ class OpenAICompatibleAdapter:
                 context_length=1_000_000,
                 modality="text+image->text",
             )
+
+            self._apply_upstream_part_profile()
         else:
             # xai and other unknown OpenAI-compatible names — permissive defaults.
             self.capability = ProviderCapability(
@@ -771,6 +773,26 @@ class OpenAICompatibleAdapter:
         if self.name != "openai" or not self.upstream_dialect:
             return ""
         return describe_upstream(self.upstream_dialect, self.upstream_evidence, self.upstream_ignored)
+
+    # Content-part restrictions per identified upstream. The alias stays
+    # optimistic by default; only backends that validate the `content` array
+    # strictly get narrowed, so the reader picks the delivery that works
+    # (text + rendered pages for PDFs, metadata only for A/V).
+    _PART_PROFILES: dict[str, dict[str, bool]] = {
+        # Lyber answers 400 "Invalid message content part" to EVERY shape except
+        # `text` and `image_url` — verified against file, input_file, file_url,
+        # bare base64, input_audio, audio_url and video_url.
+        "lyber": {"supports_pdfs": False, "supports_audio": False, "supports_video": False},
+    }
+
+    def _apply_upstream_part_profile(self) -> None:
+        """Narrow content-part support to what the detected upstream accepts."""
+        profile = self._PART_PROFILES.get(self.upstream_dialect)
+        if not profile:
+            return
+        for field, value in profile.items():
+            setattr(self.capability, field, value)
+        self.capability.modality = "text+image->text" if self.capability.supports_images else "text->text"
 
     async def _detect_openrouter_capabilities(self) -> None:
         """OpenRouter: GET /models returns architecture.input_modalities and supported_parameters."""
